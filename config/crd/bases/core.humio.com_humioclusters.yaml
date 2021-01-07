@@ -3541,9 +3541,12 @@ spec:
                       objects
                     type: object
                   controller:
-                    description: Controller is used to specify the controller used
-                      for ingress in the Kubernetes cluster. For now, only nginx is
-                      supported.
+                    description: 'NB: Current implementation directs ingress traffic
+                      to all cluster nodes. If you need to steer traffic to specific
+                      LB roles you need to disable the operator-managed Ingress resources
+                      and create them elsewhere. Controller is used to specify the
+                      controller used for ingress in the Kubernetes cluster. For now,
+                      only nginx is supported.'
                     type: string
                   enabled:
                     description: Enabled enables the logic for the Humio operator
@@ -3594,6 +3597,29 @@ spec:
               nodeCount:
                 description: NodeCount is the desired number of humio cluster nodes
                 type: integer
+              nodePools:
+                description: 'NodePools is used to define all groups of cluster nodes
+                  where all cluster nodes in a specific group shares the configuration.
+                  TODO: The idea is to move all the node-specific fields away from
+                  being specified directly on HumioClusterSpec.       For convenience
+                  the group of fields above NodePools are the nodes we are migrating
+                  away from       HumioClusterSpec which should make it easier to
+                  tidy it up when we are ready to do so.'
+                items:
+                  description: HumioClusterNodePoolSpec is used to define a group
+                    of cluster nodes that will share the same configuration.
+                  properties:
+                    attachedServiceRoles:
+                      description: 'AttachedServiceRoles are used to define a set
+                        of roles names this node pool should receive traffic for where
+                        the roles are defined in HumioClusterSpec.ServiceRoles. Pods
+                        created based on HumioClusterNodePoolSpec gets a label of
+                        the form: ''{"humio.service.role/<TARGET_ROLE_NAME>": "true"}'''
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: array
               nodeUUIDPrefix:
                 description: NodeUUIDPrefix is the prefix for the Humio Node's UUID.
                   By default this does not include the zone. If it's necessary to
@@ -3759,6 +3785,22 @@ spec:
                       it defaults to Limits if that is explicitly specified, otherwise
                       to an implementation-defined value. More info: https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/'
                     type: object
+                type: object
+              serviceRoles:
+                additionalProperties:
+                  description: HumioClusterServiceRoleSpec is used to define how a
+                    Service object should be created for a given role. The resulting
+                    name of the Kubernetes Service object is <CLUSTER_NAME>-<LB_ROLE_NAME>
+                    where <LB_ROLE_NAME> comes from key in HumioClusterSpec.ServiceRoles.
+                    This Service object can be leveraged to direct traffic to a subset
+                    of all the cluster nodes that matches a given role which is defined
+                    in entries of type HumioClusterNodePoolSpec. The Service contains
+                    a pod selector to target the labels matching the labels created
+                    based on roles defined in a HumioClusterNodePoolSpec.
+                  type: object
+                description: ServiceRoles is used to create Service objects which
+                  can be used to direct traffic to a subset of all the cluster nodes
+                  by defining the attached role in the entry of type HumioClusterNodePoolSpec.
                 type: object
               shareProcessNamespace:
                 description: ShareProcessNamespace can be useful in combination with

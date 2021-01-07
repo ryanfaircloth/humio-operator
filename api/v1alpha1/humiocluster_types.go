@@ -137,37 +137,46 @@ type HumioClusterSpec struct {
 	// compatibility with pre-0.0.14 spec defaults, this should be set to `humio_{{.Zone}}`
 	NodeUUIDPrefix string `json:"nodeUUIDPrefix,omitempty"`
 
-	// NodePools is used to list all groups of cluster nodes where all cluster nodes in a specific group shares configuration
+	// NodePools is used to define all groups of cluster nodes where all cluster nodes in a specific group shares the configuration.
 	// TODO: The idea is to move all the node-specific fields away from being specified directly on HumioClusterSpec.
 	//       For convenience the group of fields above NodePools are the nodes we are migrating away from
 	//       HumioClusterSpec which should make it easier to tidy it up when we are ready to do so.
 	NodePools []HumioClusterNodePoolSpec `json:"nodePools,omitempty"`
-	// LBRoles is used to define the names of the different roles of Service configuration
-	// TODO: Do we need to move this to a struct and make sure each of them have all the service-related options or do
-	//       we just keep it like this and use the same Service annotations, labels, etc. on all of the Service objects?
-	//       If we want per LBRole service configuration, perhaps this would be of time: `map[string]HumioClusterLBRole`
-	//       with HumioClusterLBRole containing:
+	// ServiceRoles is used to create Service objects which can be used to direct traffic to a subset of all the cluster nodes
+	// by defining the attached role in the entry of type HumioClusterNodePoolSpec.
+	ServiceRoles map[string]HumioClusterServiceRoleSpec `json:"serviceRoles,omitempty"`
+}
+
+// HumioClusterNodePoolSpec is used to define a group of cluster nodes that will share the same configuration.
+type HumioClusterNodePoolSpec struct {
+	// AttachedServiceRoles are used to define a set of roles names this node pool should receive traffic for where the
+	// roles are defined in HumioClusterSpec.ServiceRoles.
+	// Pods created based on HumioClusterNodePoolSpec gets a label of the form: '{"humio.service.role/<TARGET_ROLE_NAME>": "true"}'
+	AttachedServiceRoles []string `json:"attachedServiceRoles,omitempty"`
+	// TODO: Add relevant fields here
+}
+
+// HumioClusterServiceRoleSpec is used to define how a Service object should be created for a given role.
+// The resulting name of the Kubernetes Service object is <CLUSTER_NAME>-<LB_ROLE_NAME> where <LB_ROLE_NAME> comes
+// from key in HumioClusterSpec.ServiceRoles.
+// This Service object can be leveraged to direct traffic to a subset of all the cluster nodes that matches
+// a given role which is defined in entries of type HumioClusterNodePoolSpec. The Service contains a pod selector
+// to target the labels matching the labels created based on roles defined in a HumioClusterNodePoolSpec.
+type HumioClusterServiceRoleSpec struct {
+	// TODO: Determine if we want to migrate all Service-specific fields into this struct and perhaps also drop them
+	//       from being defined directly on HumioClusterSpec:
 	//         - HumioServiceType
 	//         - HumioServicePort
 	//         - HumioESServicePort
 	//         - HumioServiceAnnotations
 	//         - HumioServiceLabels
-	//       where these fields eventually will get removed from being directly on HumioCluster.Spec.
-	//       Perhaps START with sharing these settings, then discuss if we think we should also be moving them?
-	LBRoles []string `json:"lbRoles,omitempty"`
-}
-
-// HumioClusterNodePoolSpec is used to define a group of cluster nodes that will share the same configuration.
-type HumioClusterNodePoolSpec struct {
-	// RoleNames is used to define a set of roles this node pool should handle
-	RoleNames []string `json:"roleNames,omitempty"`
-	// TODO: Add relevant fields here
 }
 
 // HumioClusterIngressSpec is used to set up ingress-related objects in order to reach Humio externally from the kubernetes cluster
 type HumioClusterIngressSpec struct {
 	// Enabled enables the logic for the Humio operator to create ingress-related objects
 	Enabled bool `json:"enabled,omitempty"`
+	// NB: Current implementation directs ingress traffic to all cluster nodes. If you need to steer traffic to specific LB roles you need to disable the operator-managed Ingress resources and create them elsewhere.
 	// Controller is used to specify the controller used for ingress in the Kubernetes cluster. For now, only nginx is supported.
 	Controller string `json:"controller,omitempty"`
 	// TLS is used to specify whether the ingress controller will be using TLS for requests from external clients
