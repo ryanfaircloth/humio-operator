@@ -12,24 +12,91 @@ spec:
   tls:
     enabled: true
   ingress:
-    enabled: false
+    enabled: true
+    controller: nginx # alb, traefik, contour, openshift-router, (nlb?)
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      kubernetes.io/ingress.class: nginx
+      use-http01-solver: "true"
+      serviceRoleMappings:
+        # Official docs lists quite a few ingress controllers: https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/
+        # Fairly old comparison of ingress controllers: https://medium.com/flant-com/comparing-ingress-controllers-for-kubernetes-9b397483b46b
+        # Notes about some of them:
+        # - kubernetes/ingress-nginx
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://v1-18.docs.kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#ingressspec-v1beta1-networking-k8s-io
+        #     It accepts overlapping hostnames, but if combined hostname+path match the first object created wins (how about updates?):
+        #     Nginx Inc has their own separate nginx ingress controller from this one.
+        # - HAProxy
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/haproxytech/kubernetes-ingress/blob/master/documentation/README.md
+        # - AKS
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://azure.github.io/application-gateway-kubernetes-ingress/
+        # - GKE
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://cloud.google.com/kubernetes-engine/docs/tutorials/http-balancer and https://github.com/kubernetes/ingress-gce
+        # - Voyager
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://voyagermesh.com/docs/v12.0.0/concepts/ingress-types/loadbalancer/
+        # - Citrix
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/citrix/citrix-k8s-ingress-controller/blob/master/docs/configure/annotations.md
+        # - AWS ALB ingress controller
+        #     Can use "Ingress" objects to provision ALB's, but can create NLB's based on Service objects: https://github.com/kubernetes-sigs/aws-load-balancer-controller
+        #     Service -> NLB might not require use of HumioCluster.Spec.Ingress.* but instead rely on HumioCluster.Spec.ServiceRoles.* to set annotations, depending on how it works.
 
-  serviceRoles: # option A
-    stateful: {} # We can use an empty struct initially if we want to start with pod-creation before moving on to per-service settings similar to this:
-      #serviceRoles:
-      #  stateful:
-      #    type: LoadBalancer                     # This could map directly to field "type" on the Kubernetes Service object and replace HumioCluster.Spec.HumioServiceType
-      #  labels:                                  # This could map directly to field "labels" on the Kubernetes Service object and replace HumioCluster.Spec.HumioServiceLabels
-      #    "mirror.linkerd.io/exported": "true"
-      #  annotations:                             # This could map directly to field "annotations" on the Kubernetes Service object and replace HumioCluster.Spec.HumioServiceAnnotations
-      #    "service.beta.kubernetes.io/aws-load-balancer-type": "nlb"
+        # - Traefik
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://doc.traefik.io/traefik/routing/providers/kubernetes-ingress/
+        #     Can use "IngressRoute" which is their own CRD: https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/
+        # - Skipper
+        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://opensource.zalando.com/skipper/kubernetes/ingress-usage/
+        #     Can use "RouteGroup" which is their own CRD: https://opensource.zalando.com/skipper/kubernetes/routegroups/
+        # - Istio
+        #     Can use "Ingress" objects, but does not seem to allow additional configuration: https://istio.io/latest/docs/reference/config/annotations/ and https://istio.io/latest/docs/tasks/traffic-management/ingress/kubernetes-ingress/
+        #     Can use "VirtualService" and "Gateway" with is their own CRD's for fine-grained configuration: https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/
+
+        # - OpenShift
+        #     Can use "Route" objects which is their own CRD: https://docs.openshift.com/container-platform/4.6/rest_api/network_apis/route-route-openshift-io-v1.html
+        # - Contour
+        #     Can use "HTTPProxy" which is their own CRD but previously used "IngressRoute" objects: https://github.com/projectcontour/contour/blob/main/site/docs/v1.9.0/httpproxy.md
+        #     Contour 1.6 (2020-06-26) removed support for "IngressRoute".
+        # - Ambassador
+        #     Can use "Mapping" and "Host" which is their own CRD's: https://www.getambassador.io/docs/latest/tutorials/quickstart-demo/
+        # - Kong
+        #     Can use "KongIngress" which is their own CRD: https://github.com/Kong/kubernetes-ingress-controller/blob/ed88ebee538681888f303c572c139410f4d686f8/pkg/client/configuration/clientset/versioned/typed/configuration/v1/kongingress.go
+        # - Gloo
+        #     Can use "VirtualService" and "Upstream" which is their own CRD's: https://docs.solo.io/gloo-edge/latest/introduction/traffic_management/ and https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
+        stateful:
+        - /
+        ingest:
+        - /
+        # HOW ABOUT MULTIPLE PORTS?
+        # We currently have 8080 and 9200, but we might want additional ports for on-prem purposes for e.g. netflow.
+        # There's also situations where you do not need the ES hostname, so can we drop that one if not needed?
+        # Do we want to have a multi-port service implementation or should this be a one-service-per-port situation?
+        # Option 1: Expose/configure all ports on all services and rely on pod selector to send traffic to only relevant pods.
+        #           This might cause problems if you want *only* the ES port available on a given service?
+        #           Or if you only want to expose port 8080 with "type: Loadbalancer" while not configuring any other port like 9200.
+        # Option 2: Create a service per "service role" per port, so essentially ending up with this many services for a given cluster: #ports * #nodePools
+
+        # Scenarios:
+        # 1. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (TLS)
+        # 2. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (no TLS)
+        # 3. Random Layer4 loadbalancer -> ingress-nginx (no TLS) -> Humio (no TLS)
+        #    In this scenario, the l4 loadbalancer might be AWS ELB/NLB/ALB which can terminate TLS.
+        # 3. Random Layer4 loadbalancer -> Humio (no TLS)
+        #    Some customers might prefer this for air-gapped setups, or accept the risk by terminating the TLS connection early at e.g. the AWS NLB (with certs from AWS ACM).
+        # 4. Random Layer4 loadbalancer -> Humio (TLS)
+        #    This could rely on certificates obtained using things like cert-manager, or manually provided.
+  serviceRoles:
+    stateful:
+      targetPort: 8080 # TODO: This will probably prevent us from baking in support for single-service with multiple ports configured, which would be nice for scenarios that doesn't need ingress but still wants type LoadBalancer Service to expose both port 443->8080 and 9200->9200
+      type: LoadBalancer
+      labels:
+        purpose: "logging"
+      annotations:
+        "service.beta.kubernetes.io/aws-load-balancer-type"                              : "nlb"
+        "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" : "false"
+        "service.beta.kubernetes.io/aws-load-balancer-ssl-cert"                          : "arn:aws:acm:region:account:certificate/123456789012-1234-1234-1234-12345678"
+        "service.beta.kubernetes.io/aws-load-balancer-backend-protocol"                  : "ssl"
+        "service.beta.kubernetes.io/aws-load-balancer-ssl-ports"                         : "443"
+        "service.beta.kubernetes.io/aws-load-balancer-internal"                          : "0.0.0.0/0"
     ingest: {}
-
-  # Alternatively it could be something like this, but we would need to build in checks for uniqueness of the name:
-  #serviceRoles: # option B
-  #- name: stateful
-  #- name: ingest
-
   nodePools:
   - name: stateful
     attachedServiceRoles: ["stateful"]
@@ -135,214 +202,3 @@ spec:
         value: "z-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181"
       - name: "KAFKA_SERVERS"
         value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
----
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-    nginx.ingress.kubernetes.io/configuration-snippet: |2-
-
-      more_set_headers "Expect-CT: max-age=604800, enforce";
-      more_set_headers "Referrer-Policy: no-referrer";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
-    nginx.ingress.kubernetes.io/cors-allow-headers: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization
-    nginx.ingress.kubernetes.io/cors-allow-methods: GET, PUT, POST, DELETE, PATCH, OPTIONS
-    nginx.ingress.kubernetes.io/cors-allow-origin: https://my-cluster-es.example.com
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: 512m
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
-    nginx.ingress.kubernetes.io/proxy-ssl-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-secret: logging/example-humiocluster
-    nginx.ingress.kubernetes.io/proxy-ssl-server-name: example-humiocluster.logging
-    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
-    nginx.ingress.kubernetes.io/upstream-vhost: my-cluster-es.example.com
-    use-http01-solver: "true"
-  labels:
-    app.kubernetes.io/instance: example-humiocluster
-    app.kubernetes.io/managed-by: humio-operator
-    app.kubernetes.io/name: humio
-  name: example-humiocluster-es-ingest
-  namespace: default
-spec:
-  rules:
-  - host: my-cluster-es.example.com
-    http:
-      paths:
-      - backend:
-          serviceName: example-humiocluster-ingest
-          servicePort: 9200
-        path: /
-  tls:
-  - hosts:
-    - my-cluster-es.example.com
-    secretName: example-humiocluster-es-certificate
----
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-    nginx.ingress.kubernetes.io/configuration-snippet: |2-
-
-      more_set_headers "Expect-CT: max-age=604800, enforce";
-      more_set_headers "Referrer-Policy: no-referrer";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
-    nginx.ingress.kubernetes.io/cors-allow-headers: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization
-    nginx.ingress.kubernetes.io/cors-allow-methods: GET, PUT, POST, DELETE, PATCH, OPTIONS
-    nginx.ingress.kubernetes.io/cors-allow-origin: https://my-cluster.example.com
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: 512m
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "25"
-    nginx.ingress.kubernetes.io/proxy-ssl-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-secret: default/example-humiocluster
-    nginx.ingress.kubernetes.io/proxy-ssl-server-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
-    nginx.ingress.kubernetes.io/upstream-vhost: my-cluster.example.com
-    use-http01-solver: "true"
-  labels:
-    app.kubernetes.io/instance: example-humiocluster
-    app.kubernetes.io/managed-by: humio-operator
-    app.kubernetes.io/name: humio
-  name: example-humiocluster-general
-  namespace: default
-spec:
-  rules:
-  - host: my-cluster.example.com
-    http:
-      paths:
-      - backend:
-          serviceName: example-humiocluster-stateful
-          servicePort: 8080
-        path: /
-  tls:
-  - hosts:
-    - my-cluster.example.com
-    secretName: example-humiocluster-certificate
----
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-    nginx.ingress.kubernetes.io/configuration-snippet: |2-
-
-      more_set_headers "Expect-CT: max-age=604800, enforce";
-      more_set_headers "Referrer-Policy: no-referrer";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
-    nginx.ingress.kubernetes.io/cors-allow-headers: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization
-    nginx.ingress.kubernetes.io/cors-allow-methods: GET, PUT, POST, DELETE, PATCH, OPTIONS
-    nginx.ingress.kubernetes.io/cors-allow-origin: https://my-cluster.example.com
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: 512m
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
-    nginx.ingress.kubernetes.io/proxy-ssl-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-secret: default/example-humiocluster
-    nginx.ingress.kubernetes.io/proxy-ssl-server-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
-    nginx.ingress.kubernetes.io/upstream-vhost: my-cluster.example.com
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    use-http01-solver: "true"
-  labels:
-    app.kubernetes.io/instance: example-humiocluster
-    app.kubernetes.io/managed-by: humio-operator
-    app.kubernetes.io/name: humio
-  name: example-humiocluster-ingest
-  namespace: default
-spec:
-  rules:
-  - host: my-cluster.example.com
-    http:
-      paths:
-      - backend:
-          serviceName: example-humiocluster-ingest
-          servicePort: 8080
-        path: /api/v./(dataspaces|repositories)/[^/]+/(ingest|logplex)
-      - backend:
-          serviceName: example-humiocluster-ingest
-          servicePort: 8080
-        path: /api/v1/ingest
-      - backend:
-          serviceName: example-humiocluster-ingest
-          servicePort: 8080
-        path: /services/collector
-      - backend:
-          serviceName: example-humiocluster-ingest
-          servicePort: 8080
-        path: /_bulk
-  tls:
-  - hosts:
-    - my-cluster.example.com
-    secretName: example-humiocluster-certificate
----
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-    nginx.ingress.kubernetes.io/configuration-snippet: |2-
-
-      more_set_headers "Expect-CT: max-age=604800, enforce";
-      more_set_headers "Referrer-Policy: no-referrer";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
-    nginx.ingress.kubernetes.io/cors-allow-headers: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization
-    nginx.ingress.kubernetes.io/cors-allow-methods: GET, PUT, POST, DELETE, PATCH, OPTIONS
-    nginx.ingress.kubernetes.io/cors-allow-origin: https://my-cluster.example.com
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: 512m
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: 4h
-    nginx.ingress.kubernetes.io/proxy-ssl-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-secret: default/example-humiocluster
-    nginx.ingress.kubernetes.io/proxy-ssl-server-name: example-humiocluster.default
-    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
-    nginx.ingress.kubernetes.io/upstream-vhost: my-cluster.example.com
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    use-http01-solver: "true"
-  labels:
-    app.kubernetes.io/instance: example-humiocluster
-    app.kubernetes.io/managed-by: humio-operator
-    app.kubernetes.io/name: humio
-  name: example-humiocluster-streaming-query
-  namespace: default
-spec:
-  rules:
-  - host: my-cluster.example.com
-    http:
-      paths:
-      - backend:
-          serviceName: example-humiocluster-stateful
-          servicePort: 8080
-        path: /api/v./(dataspaces|repositories)/[^/]+/query$
-  tls:
-  - hosts:
-    - my-cluster.example.com
-    secretName: example-humiocluster-certificate
