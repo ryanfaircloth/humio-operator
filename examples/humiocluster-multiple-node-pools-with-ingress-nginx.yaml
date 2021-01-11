@@ -1,3 +1,67 @@
+# Official docs lists quite a few ingress controllers: https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/
+# Fairly old comparison of ingress controllers: https://medium.com/flant-com/comparing-ingress-controllers-for-kubernetes-9b397483b46b
+# Notes about some of them:
+# - kubernetes/ingress-nginx
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://v1-18.docs.kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#ingressspec-v1beta1-networking-k8s-io
+#     It accepts overlapping hostnames, but if combined hostname+path match the first object created wins (how about updates?):
+#     Nginx Inc has their own separate nginx ingress controller from this one.
+# - HAProxy
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/haproxytech/kubernetes-ingress/blob/master/documentation/README.md
+# - AKS
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://azure.github.io/application-gateway-kubernetes-ingress/
+# - GKE
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://cloud.google.com/kubernetes-engine/docs/tutorials/http-balancer and https://github.com/kubernetes/ingress-gce
+# - Voyager
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://voyagermesh.com/docs/v12.0.0/concepts/ingress-types/loadbalancer/
+# - Citrix
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/citrix/citrix-k8s-ingress-controller/blob/master/docs/configure/annotations.md
+# - AWS ALB ingress controller
+#     Can use "Ingress" objects to provision ALB's, but can create NLB's based on Service objects: https://github.com/kubernetes-sigs/aws-load-balancer-controller
+#     Service -> NLB might not require use of HumioCluster.Spec.Ingress.* but instead rely on HumioCluster.Spec.ServiceRoles.* to set annotations, depending on how it works.
+
+# - Traefik
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://doc.traefik.io/traefik/routing/providers/kubernetes-ingress/
+#     Can use "IngressRoute" which is their own CRD: https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/
+# - Skipper
+#     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://opensource.zalando.com/skipper/kubernetes/ingress-usage/
+#     Can use "RouteGroup" which is their own CRD: https://opensource.zalando.com/skipper/kubernetes/routegroups/
+# - Istio
+#     Can use "Ingress" objects, but does not seem to allow additional configuration: https://istio.io/latest/docs/reference/config/annotations/ and https://istio.io/latest/docs/tasks/traffic-management/ingress/kubernetes-ingress/
+#     Can use "VirtualService" and "Gateway" with is their own CRD's for fine-grained configuration: https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/
+# - OpenShift
+#     Can use "Route" objects which is their own CRD: https://docs.openshift.com/container-platform/4.6/rest_api/network_apis/route-route-openshift-io-v1.html
+#     Relies on annotations on "Route" objects: https://access.redhat.com/documentation/en-us/openshift_container_platform/4.6/html/networking/configuring-routes
+#     "Some ecosystem components have an integration with Ingress resources but not with route resources. To cover this case, OpenShift Container Platform automatically creates managed route objects when an Ingress object is created. These route objects are deleted when the corresponding Ingress objects are deleted.": https://access.redhat.com/documentation/en-us/openshift_container_platform/4.6/html/networking/configuring-routes
+#     "Creating a route through an Ingress object": https://docs.openshift.com/container-platform/4.6/networking/routes/route-configuration.html#nw-ingress-creating-a-route-via-an-ingress_route-configuration
+# - Contour
+#     Can use "HTTPProxy" which is their own CRD but previously used "IngressRoute" objects: https://github.com/projectcontour/contour/blob/main/site/docs/v1.9.0/httpproxy.md
+#     Contour 1.6 (2020-06-26) removed support for "IngressRoute".
+# - Ambassador
+#     Can use "Mapping" and "Host" which is their own CRD's: https://www.getambassador.io/docs/latest/tutorials/quickstart-demo/
+# - Kong
+#     Can use "KongIngress" which is their own CRD: https://github.com/Kong/kubernetes-ingress-controller/blob/ed88ebee538681888f303c572c139410f4d686f8/pkg/client/configuration/clientset/versioned/typed/configuration/v1/kongingress.go
+# - Gloo
+#     Can use "VirtualService" and "Upstream" which is their own CRD's: https://docs.solo.io/gloo-edge/latest/introduction/traffic_management/ and https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
+
+# HOW ABOUT MULTIPLE PORTS?
+# We currently have 8080 and 9200, but we might want additional ports for on-prem purposes for e.g. netflow.
+# There's also situations where you do not need the ES hostname, so can we drop that one if not needed?
+# Do we want to have a multi-port service implementation or should this be a one-service-per-port situation?
+# Option 1: Expose/configure all ports on all services and rely on pod selector to send traffic to only relevant pods.
+#           This might cause problems if you want *only* the ES port available on a given service?
+#           Or if you only want to expose port 8080 with "type: Loadbalancer" while not configuring any other port like 9200.
+# Option 2: Create a service per "service role" per port, so essentially ending up with this many services for a given cluster: #ports * #nodePools
+
+# Scenarios:
+# 1. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (TLS)
+# 2. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (no TLS)
+# 3. Random Layer4 loadbalancer -> ingress-nginx (no TLS) -> Humio (no TLS)
+#    In this scenario, the l4 loadbalancer might be AWS ELB/NLB/ALB which can terminate TLS.
+# 3. Random Layer4 loadbalancer -> Humio (no TLS)
+#    Some customers might prefer this for air-gapped setups, or accept the risk by terminating the TLS connection early at e.g. the AWS NLB (with certs from AWS ACM).
+# 4. Random Layer4 loadbalancer -> Humio (TLS)
+#    This could rely on certificates obtained using things like cert-manager, or manually provided.
+---
 apiVersion: core.humio.com/v1alpha1
 kind: HumioCluster
 metadata:
@@ -14,81 +78,98 @@ spec:
   ingress:
     enabled: true
     controller: nginx # alb, traefik, contour, openshift-router, (nlb?)
-    annotations:
+    labels:      # Set of "common labels" which are merged with the custom labels per object
+    annotations: # Set of "common annoations" which are merged with the custom annotations per object.
       cert-manager.io/cluster-issuer: letsencrypt-prod
-      kubernetes.io/ingress.class: nginx
       use-http01-solver: "true"
-      serviceRoleMappings:
-        # Official docs lists quite a few ingress controllers: https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/
-        # Fairly old comparison of ingress controllers: https://medium.com/flant-com/comparing-ingress-controllers-for-kubernetes-9b397483b46b
-        # Notes about some of them:
-        # - kubernetes/ingress-nginx
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://v1-18.docs.kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#ingressspec-v1beta1-networking-k8s-io
-        #     It accepts overlapping hostnames, but if combined hostname+path match the first object created wins (how about updates?):
-        #     Nginx Inc has their own separate nginx ingress controller from this one.
-        # - HAProxy
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/haproxytech/kubernetes-ingress/blob/master/documentation/README.md
-        # - AKS
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://azure.github.io/application-gateway-kubernetes-ingress/
-        # - GKE
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://cloud.google.com/kubernetes-engine/docs/tutorials/http-balancer and https://github.com/kubernetes/ingress-gce
-        # - Voyager
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://voyagermesh.com/docs/v12.0.0/concepts/ingress-types/loadbalancer/
-        # - Citrix
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://github.com/citrix/citrix-k8s-ingress-controller/blob/master/docs/configure/annotations.md
-        # - AWS ALB ingress controller
-        #     Can use "Ingress" objects to provision ALB's, but can create NLB's based on Service objects: https://github.com/kubernetes-sigs/aws-load-balancer-controller
-        #     Service -> NLB might not require use of HumioCluster.Spec.Ingress.* but instead rely on HumioCluster.Spec.ServiceRoles.* to set annotations, depending on how it works.
 
-        # - Traefik
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://doc.traefik.io/traefik/routing/providers/kubernetes-ingress/
-        #     Can use "IngressRoute" which is their own CRD: https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/
-        # - Skipper
-        #     Can use "Ingress" objects with additional annotations for fine-grained configuration: https://opensource.zalando.com/skipper/kubernetes/ingress-usage/
-        #     Can use "RouteGroup" which is their own CRD: https://opensource.zalando.com/skipper/kubernetes/routegroups/
-        # - Istio
-        #     Can use "Ingress" objects, but does not seem to allow additional configuration: https://istio.io/latest/docs/reference/config/annotations/ and https://istio.io/latest/docs/tasks/traffic-management/ingress/kubernetes-ingress/
-        #     Can use "VirtualService" and "Gateway" with is their own CRD's for fine-grained configuration: https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/
+    customRoleMappings-minimal: # If this is not defined, we create something based on the "controller" value which will target the implicit "all" in serviceRoles
+      my-cluster.example.com:
+        - name: all
+          targetServiceRole: all-8080 # we can infer what service name and targetPort should be
 
-        # - OpenShift
-        #     Can use "Route" objects which is their own CRD: https://docs.openshift.com/container-platform/4.6/rest_api/network_apis/route-route-openshift-io-v1.html
-        # - Contour
-        #     Can use "HTTPProxy" which is their own CRD but previously used "IngressRoute" objects: https://github.com/projectcontour/contour/blob/main/site/docs/v1.9.0/httpproxy.md
-        #     Contour 1.6 (2020-06-26) removed support for "IngressRoute".
-        # - Ambassador
-        #     Can use "Mapping" and "Host" which is their own CRD's: https://www.getambassador.io/docs/latest/tutorials/quickstart-demo/
-        # - Kong
-        #     Can use "KongIngress" which is their own CRD: https://github.com/Kong/kubernetes-ingress-controller/blob/ed88ebee538681888f303c572c139410f4d686f8/pkg/client/configuration/clientset/versioned/typed/configuration/v1/kongingress.go
-        # - Gloo
-        #     Can use "VirtualService" and "Upstream" which is their own CRD's: https://docs.solo.io/gloo-edge/latest/introduction/traffic_management/ and https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
-        stateful:
-        - /
-        ingest:
-        - /
-        # HOW ABOUT MULTIPLE PORTS?
-        # We currently have 8080 and 9200, but we might want additional ports for on-prem purposes for e.g. netflow.
-        # There's also situations where you do not need the ES hostname, so can we drop that one if not needed?
-        # Do we want to have a multi-port service implementation or should this be a one-service-per-port situation?
-        # Option 1: Expose/configure all ports on all services and rely on pod selector to send traffic to only relevant pods.
-        #           This might cause problems if you want *only* the ES port available on a given service?
-        #           Or if you only want to expose port 8080 with "type: Loadbalancer" while not configuring any other port like 9200.
-        # Option 2: Create a service per "service role" per port, so essentially ending up with this many services for a given cluster: #ports * #nodePools
+    customRoleMappings-full: # If not defined, we infer the type of object "Ingress", "Route", ... to create based on HumioCluster.Spec.Ingress.Controller, and assume targetServiceRole is "all" which gets created by default
+      my-cluster.example.com:
+        - name: streaming-query
+          class: nginx # sets "ingressClass: "nginx" and/or annotation "kubernetes.io/ingress.class: nginx". Default value is same value as HumioCluster.spec.Ingress.Controller.
+          targetServiceRole: stateful-8080 # we can infer what service name and targetPort should be
+          targets:
+            - path: "/api/v./(dataspaces|repositories)/[^/]+/query$"
+              annotations: # This could be merged with common HumioCluster.Spec.Ingress.Annotations? Alternatively, drop the common field.
+                "nginx.ingress.kubernetes.io/proxy-body-size": "512m"
+                "nginx.ingress.kubernetes.io/proxy-http-version": "1.1"
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "4h"
+                "nginx.ingress.kubernetes.io/use-regex": "true"
+                "nginx.ingress.kubernetes.io/proxy-buffering": "off"
+              labels:
+                purpose: "logging"
+                billing-category: "infrastructure"
+        - name: queryjobs
+          class: nginx
+          targetServiceRole: stateful-8080 # we can infer what service name and targetPort should be
+          targets:
+            - path: "/api/v./(dataspaces|repositories)/[^/]+/queryjobs/[^/]+$"
+              annotations: # This could be merged with common HumioCluster.Spec.Ingress.Annotations? Alternatively, drop the common field.
+                "nginx.ingress.kubernetes.io/proxy-body-size": "512m"
+                "nginx.ingress.kubernetes.io/proxy-http-version": "1.1"
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "25"
+              labels:
+                purpose: "logging"
+                billing-category: "infrastructure"
+        - name: ingest
+          class: nginx
+          targetServiceRole: stateless-8080 # we can infer what service name and targetPort should be
+          targets:
+            - path: "/_bulk"
+              annotations: # This could be merged with common HumioCluster.Spec.Ingress.Annotations? Alternatively, drop the common field.
+                "nginx.ingress.kubernetes.io/proxy-body-size": "512m"
+                "nginx.ingress.kubernetes.io/proxy-http-version": "1.1"
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "90"
+                "nginx.ingress.kubernetes.io/use-regex": "true"
+              labels:
+                purpose: "logging"
+                billing-category: "infrastructure"
+        - name: general
+          class: nginx
+          targetServiceRole: stateless-8080 # we can infer what service name and targetPort should be
+          targets:
+            - path: "/"
+              annotations: # This could be merged with common HumioCluster.Spec.Ingress.Annotations? Alternatively, drop the common field.
+                "nginx.ingress.kubernetes.io/proxy-body-size": "512m"
+                "nginx.ingress.kubernetes.io/proxy-http-version": "1.1"
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "25"
+              labels:
+                purpose: "logging"
+                billing-category: "infrastructure"
+      my-cluster-es.example.com:
+        - name: ingest-es
+          class: nginx
+          targetServiceRole: stateless      # we may only require this to be defined if more than one serviceRole exists (including the built in "all")
+          #targetServicePort: 9200          # perhaps this should only be required if there are multiple ports defined in targetServiceRole
+          targets:
+            - paths: "/"                    # this should be the default
+              annotations:                  # default is the empty set, but will still be merged with the common ingress annotations
+                "nginx.ingress.kubernetes.io/proxy-body-size": "512m"
+                "nginx.ingress.kubernetes.io/proxy-http-version": "1.1"
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "90"
+              labels:                       # default is the empty set, but will still be merged with the common ingress labels
+                purpose: "logging"
+                billing-category: "infrastructure"
 
-        # Scenarios:
-        # 1. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (TLS)
-        # 2. Random Layer4 loadbalancer -> ingress-nginx (TLS) -> Humio (no TLS)
-        # 3. Random Layer4 loadbalancer -> ingress-nginx (no TLS) -> Humio (no TLS)
-        #    In this scenario, the l4 loadbalancer might be AWS ELB/NLB/ALB which can terminate TLS.
-        # 3. Random Layer4 loadbalancer -> Humio (no TLS)
-        #    Some customers might prefer this for air-gapped setups, or accept the risk by terminating the TLS connection early at e.g. the AWS NLB (with certs from AWS ACM).
-        # 4. Random Layer4 loadbalancer -> Humio (TLS)
-        #    This could rely on certificates obtained using things like cert-manager, or manually provided.
   serviceRoles:
     stateful:
-      targetPort: 8080 # TODO: This will probably prevent us from baking in support for single-service with multiple ports configured, which would be nice for scenarios that doesn't need ingress but still wants type LoadBalancer Service to expose both port 443->8080 and 9200->9200
-      type: LoadBalancer
+      ports:
+        - protocol: TCP
+          port: 8080
+          targetPort: 8080
+    stateful-8080:
+      port: 8080       # Service port which defaults to port 8080. Useful to override if traffic gets terminated using TLS by either Humio or the cloud provided load balancer
+      targetPort: 8080 # Container port which defaults to port 8080.
+      type: ClusterIP  # Type of Service object which defaults to ClusterIP.
+      protocol: TCP    # Protocol of target port which defaults to TCP. TCP works for both HTTP and HTTPS, but we allow user to define this in case they might want to use an UDP ingest listener.
       labels:
         purpose: "logging"
+        billing-category: "infrastructure"
       annotations:
         "service.beta.kubernetes.io/aws-load-balancer-type"                              : "nlb"
         "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" : "false"
@@ -96,10 +177,24 @@ spec:
         "service.beta.kubernetes.io/aws-load-balancer-backend-protocol"                  : "ssl"
         "service.beta.kubernetes.io/aws-load-balancer-ssl-ports"                         : "443"
         "service.beta.kubernetes.io/aws-load-balancer-internal"                          : "0.0.0.0/0"
-    ingest: {}
+    stateless-8080: {}
+    stateless-9200:
+      targetPort: 9200
+    all-8080: {}
+    # We *could* decide to introduce support for multi-port services and use []corev1.ServicePort directly. This also requires changing ingress so it refers to "port" property:
+    #all: # we may even include an "all" roles by default which you don't need to explicitly set.
+    #  ports:
+    #    - protocol: TCP
+    #      port: 8080
+    #      targetPort: 8080
+    #    - protocol: TCP
+    #      port: 9200
+    #      targetPort: 9200
+
+
   nodePools:
   - name: stateful
-    attachedServiceRoles: ["stateful"]
+    attachedServiceRoles: ["all-8080", "stateful-8080"]
     image: "humio/humio-core:1.18.1"
     affinity:
       nodeAffinity:
@@ -133,7 +228,9 @@ spec:
       hostPath:
         path: "/mnt/disks/vol1"
         type: "Directory"
-    environmentVariables:
+    environmentVariables:             # We can either decide to merge this with a common set of env vars, or alternatively not inherit any common env vars. Not inheriting common env vars might seem repetitive though.
+    - name: QUERY_COORDINATOR
+      value: "true"                   # This is default, perhaps leave it out
     - name: S3_STORAGE_BUCKET
       value: "my-cluster-storage"
     - name: S3_STORAGE_REGION
@@ -150,8 +247,8 @@ spec:
       value: "z-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181"
     - name: "KAFKA_SERVERS"
       value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
-  - name: ingest
-    attachedServiceRoles: ["ingest"]
+  - name: stateless
+    attachedServiceRoles: ["all-8080", "stateless-8080", "stateless-9200"]
     image: "humio/humio-core:1.18.1"
     affinity:
       nodeAffinity:
@@ -161,7 +258,7 @@ spec:
             - key: humio_node_type
               operator: In
               values:
-              - core
+              - core-spot # can we get away with this when they are not handling queries and also not doing digest?
           - matchExpressions:
             - key: kubernetes.io/arch
               operator: In
@@ -181,11 +278,9 @@ spec:
               values:
               - humio
           topologyKey: kubernetes.io/hostname
-    dataVolumeSource:
-      hostPath:
-        path: "/mnt/disks/vol1"
-        type: "Directory"
     environmentVariables:
+      - name: QUERY_COORDINATOR
+        value: "false"
       - name: S3_STORAGE_BUCKET
         value: "my-cluster-storage"
       - name: S3_STORAGE_REGION
