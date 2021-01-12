@@ -33,6 +33,7 @@
 #     Relies on annotations on "Route" objects: https://access.redhat.com/documentation/en-us/openshift_container_platform/4.6/html/networking/configuring-routes
 #     "Some ecosystem components have an integration with Ingress resources but not with route resources. To cover this case, OpenShift Container Platform automatically creates managed route objects when an Ingress object is created. These route objects are deleted when the corresponding Ingress objects are deleted.": https://access.redhat.com/documentation/en-us/openshift_container_platform/4.6/html/networking/configuring-routes
 #     "Creating a route through an Ingress object": https://docs.openshift.com/container-platform/4.6/networking/routes/route-configuration.html#nw-ingress-creating-a-route-via-an-ingress_route-configuration
+
 # - Contour
 #     Can use "HTTPProxy" which is their own CRD but previously used "IngressRoute" objects: https://github.com/projectcontour/contour/blob/main/site/docs/v1.9.0/httpproxy.md
 #     Contour 1.6 (2020-06-26) removed support for "IngressRoute".
@@ -77,18 +78,18 @@ spec:
     enabled: true
   ingress:
     enabled: true
-    controller: nginx # alb, traefik, contour, openshift-router, (nlb?)
+    controller: nginx # alb, traefik, contour, openshift-router, (nlb?),
     labels:      # Set of "common labels" which are merged with the custom labels per object
-    annotations: # Set of "common annoations" which are merged with the custom annotations per object.
+    annotations: # Set of "common annotations" which are merged with the custom annotations per object.
       cert-manager.io/cluster-issuer: letsencrypt-prod
       use-http01-solver: "true"
 
-    customRoleMappings-minimal: # If this is not defined, we create something based on the "controller" value which will target the implicit "all" in serviceRoles
+    serviceRoleMappings-minimal: # If this is not defined, we create something based on the "controller" value which will target the implicit "all" in serviceRoles
       my-cluster.example.com:
         - name: all
           targetServiceRole: all-8080 # we can infer what service name and targetPort should be
 
-    customRoleMappings-full: # If not defined, we infer the type of object "Ingress", "Route", ... to create based on HumioCluster.Spec.Ingress.Controller, and assume targetServiceRole is "all" which gets created by default
+    serviceRoleMappings-full: # If not defined, we infer the type of object "Ingress", "Route", ... to create based on HumioCluster.Spec.Ingress.Controller, and assume targetServiceRole is "all" which gets created by default
       my-cluster.example.com:
         - name: streaming-query
           class: nginx # sets "ingressClass: "nginx" and/or annotation "kubernetes.io/ingress.class: nginx". Default value is same value as HumioCluster.spec.Ingress.Controller.
@@ -106,7 +107,8 @@ spec:
                 billing-category: "infrastructure"
         - name: queryjobs
           class: nginx
-          targetServiceRole: stateful-8080 # we can infer what service name and targetPort should be
+          targetServiceRole: stateful # we can infer what service name and targetPort should be
+          targetServicePort: 8080
           targets:
             - path: "/api/v./(dataspaces|repositories)/[^/]+/queryjobs/[^/]+$"
               annotations: # This could be merged with common HumioCluster.Spec.Ingress.Annotations? Alternatively, drop the common field.
@@ -157,11 +159,14 @@ spec:
                 billing-category: "infrastructure"
 
   serviceRoles:
-    stateful:
+    stateful: # perhaps we can just detect services based on attachedServiceRole values?
       ports:
         - protocol: TCP
           port: 8080
           targetPort: 8080
+        - protocol: TCP
+          port: 9200
+          targetPort: 9200
     stateful-8080:
       port: 8080       # Service port which defaults to port 8080. Useful to override if traffic gets terminated using TLS by either Humio or the cloud provided load balancer
       targetPort: 8080 # Container port which defaults to port 8080.
@@ -180,7 +185,7 @@ spec:
     stateless-8080: {}
     stateless-9200:
       targetPort: 9200
-    all-8080: {}
+    all: {}
     # We *could* decide to introduce support for multi-port services and use []corev1.ServicePort directly. This also requires changing ingress so it refers to "port" property:
     #all: # we may even include an "all" roles by default which you don't need to explicitly set.
     #  ports:
@@ -192,10 +197,11 @@ spec:
     #      targetPort: 9200
 
 
-  nodePools:
+  nodePools-directly:
   - name: stateful
     deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
-    attachedServiceRoles: ["all-8080", "stateful-8080"]
+    nodeCount: 3 # perhaps we should call this "replicas"?
+    attachedServiceRoles: ["all-8080", "stateful"]
     image: "humio/humio-core:1.18.1"
     affinity:
       nodeAffinity:
@@ -250,6 +256,7 @@ spec:
       value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
   - name: stateless
     deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
+    nodeCount: 3 # perhaps we should call this "replicas"?
     attachedServiceRoles: ["all-8080", "stateless-8080", "stateless-9200"]
     image: "humio/humio-core:1.18.1"
     affinity:
@@ -299,3 +306,215 @@ spec:
         value: "z-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181"
       - name: "KAFKA_SERVERS"
         value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
+
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+  nodePools-specRef:
+    stateful: # this name is reused for pods/deployment objects
+      nodePoolSpecRef: stateful # this name is not visible on pods/deployment objects, but we could consider adding an annotation (or label?) which includes this? Do we care if the content stays the same? Probably not. We should still do SHA256 and compare, but if we are just renaming the nodePoolSpec we don't need to replace it.
+      nodeCount: 3
+      attachedServiceRoles: [ "all-8080", "stateful-8080" ]
+    stateless:
+      nodePoolSpecRef: stateless
+      nodeCount: 3
+      attachedServiceRoles: [ "all-8080", "stateless-8080", "stateless-9200" ]
+    # Alternatively this could be a list:
+    #- name: stateful
+    #  nodePoolSpecRef: stateful
+    #  nodeCount: 3
+    #- name: stateless
+    #  nodePoolSpecRef: stateless
+    #  nodeCount: 3
+
+  nodePoolSpecs: # Add this either here in HumioClusterSpec, or consider creating a separate CRD? Might be easier with the same CRD and we decided against nodepools as separate CRD initially.
+    stateful: # Could also be a list where this key would be moved into a field called e.g. "name"
+      #deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
+      image: "humio/humio-core:1.18.1"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: humio_node_type
+                    operator: In
+                    values:
+                      - core
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - humio
+              topologyKey: kubernetes.io/hostname
+      dataVolumeSource:
+        hostPath:
+          path: "/mnt/disks/vol1"
+          type: "Directory"
+      environmentVariables: # We can either decide to merge this with a common set of env vars, or alternatively not inherit any common env vars. Not inheriting common env vars might seem repetitive though.
+        - name: QUERY_COORDINATOR
+          value: "true"                   # This is default, perhaps leave it out
+        - name: S3_STORAGE_BUCKET
+          value: "my-cluster-storage"
+        - name: S3_STORAGE_REGION
+          value: "us-west-2"
+        - name: S3_STORAGE_ENCRYPTION_KEY
+          value: "my-encryption-key"
+        - name: USING_EPHEMERAL_DISKS
+          value: "true"
+        - name: S3_STORAGE_PREFERRED_COPY_SOURCE
+          value: "true"
+        - name: HUMIO_JVM_ARGS
+          value: -Xss2m -Xms2g -Xmx26g -server -XX:MaxDirectMemorySize=26g -XX:+UseParallelOldGC -XX:+UnlockDiagnosticVMOptions -XX:CompileCommand=dontinline,com/humio/util/HotspotUtilsJ.dontInline -Xlog:gc+jni=debug:stdout -Dakka.log-config-on-start=on -Xlog:gc*:stdout:time,tags
+        - name: "ZOOKEEPER_URL"
+          value: "z-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181"
+        - name: "KAFKA_SERVERS"
+          value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
+    stateless:
+      #deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
+      image: "humio/humio-core:1.18.1"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: humio_node_type
+                    operator: In
+                    values:
+                      - core-spot # can we get away with this when they are not handling queries and also not doing digest?
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - humio
+              topologyKey: kubernetes.io/hostname
+      environmentVariables:
+        - name: QUERY_COORDINATOR
+          value: "false"
+        - name: S3_STORAGE_BUCKET
+          value: "my-cluster-storage"
+        - name: S3_STORAGE_REGION
+          value: "us-west-2"
+        - name: S3_STORAGE_ENCRYPTION_KEY
+          value: "my-encryption-key"
+        - name: USING_EPHEMERAL_DISKS
+          value: "true"
+        - name: S3_STORAGE_PREFERRED_COPY_SOURCE
+          value: "true"
+        - name: HUMIO_JVM_ARGS
+          value: -Xss2m -Xms2g -Xmx26g -server -XX:MaxDirectMemorySize=26g -XX:+UseParallelOldGC -XX:+UnlockDiagnosticVMOptions -XX:CompileCommand=dontinline,com/humio/util/HotspotUtilsJ.dontInline -Xlog:gc+jni=debug:stdout -Dakka.log-config-on-start=on -Xlog:gc*:stdout:time,tags
+        - name: "ZOOKEEPER_URL"
+          value: "z-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181,z-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:2181"
+        - name: "KAFKA_SERVERS"
+          value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
+
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+# Questions we need to answer:
+#   Pods/nodePools:
+#     1. Determine if we want to use nodePoolSpecs or not.
+#       a) If yes: which fields to we want to include in nodePools to allow for overriding/extending what is defined in the nodePoolSpec? E.g. appending an environment variable but otherwise the rest is as in the nodePoolSpec.
+#     2. Determine how many of the old pod-specific fields we want to keep vs retire from being specified directly on HumioClusterSpec.
+#       a) For the fields that will be both places: What behavior do we want to use? Inherit where we merge lists (e.g. environmentVariables)?
+#   Services:
+#     1. Determine if we want to use multi-port services.
+#       a) If yes: determine if we want to "detect" the port automatically if only one port is present.
+#     2. Do we want to add an implicit "all" Service?
+#   Ingress:
+#     1. Determine to what extent we want to bake in ingress-controller specifics. E.g. do we want to keep controller=nginx or instead use controller=generic|openshift?
+#       a) If we drop nginx from being baked in, we must include examples for how to migrate to controller=generic to achieve the same.
+#   Shared:
+#     1. What is the migration strategy for existing clusters?
+#        We probably need to bump our API version, but how does the actual upgrade procedure look from a user-perspective?
+#          I would probably prefer moving to a new API group name and bumping to v1beta1 at the same time and also dropping the deprecated fields in v1beta1.
+#            If we do that we probably want to keep both Reconciler's around for a version or two.
+#            What happens if two API groups "claim" the same CRD name? Which one wins when writing "kubectl get humiocluster"?
+#            Upgrade procedure for the user:
+#              0.  make it clear that this upgrade requires user intervention.
+#                  there should NOT be resources with both the old and the new API defined. for this reason we may want to change the procedure so we do not have both API's installed at the same time.
+#              1.  apply new CRD's
+#              2.  upgrade humio-operator to version that supports both the old and new API
+#              3.  user creates backup of the resources using the old API
+#              4.  user constructs resources using the new API (but do not apply yet)
+#              5.  delete the resources using the old API
+#              6.  when step 5 is done: apply resources using the new API
+#              7.  confirm resources gets into expected state
+#              8.  confirm no resources are using the old API
+#              9.  delete CRD's for the old API
+#              10. upgrade humio-operator to some future version which doesn't support the old API
+#
+#            Alternative upgrade procedure for the user:
+#              0.  make it clear that this upgrade requires user intervention
+#              1.  disable humio-operator by setting replicas=0
+#              2.  user creates backup of the resources using the old API
+#              3.  user constructs resources using the new API (but do not apply yet)
+#              4.  delete the resources using the old API
+#              5.  confirm no resources are using the old API
+#              6.  delete CRD's for the old API
+#              7.  apply new CRD's
+#              8.  apply resources using the new API
+#              9.  upgrade humio-operator to version that supports new API
+#              10. confirm resources gets into expected state
+#        Overall we will have to either: add new API group name and have two reconcilers for each resource type, OR, stick with our old API group name and instead first extend it then bump API version.
+#       a) Do we want to bump API versions for all our CRD's as that might be easier to understand for the user?
+#       b) Do we want to drop "core" from "core.humio.com/v1alpha1" at the same time so it becomes "humio.com/v1beta1"?
+#          What happens to existing "ownerReferences"? Is this why cert-manager uses annotations to track ownership? https://github.com/jetstack/cert-manager/blob/master/pkg/apis/certmanager/v1/types.go#L48-L49 and https://github.com/jetstack/letsencrypt-caa-bug-checker/blob/master/main.go#L187
+#            Do we need to write code which replaces "ownerReferences" with some annotations and write our own Garbage Collection logic?
+#            We could also drop the "ownerReferences" and not write our own Garbage Collection logic?
+#       c) Do we want to first extend the existing CRD then bump the API version, or alternatively create a new API version with its own separate controller?
+#          If we drop "core" in group name: create humio.com/v1beta1 API, immediately drop deprecated fields, make a copy the Reconciler's to handle humio.com/v1beta1, in future operator version drop support for core.humio.com/v1alpha1 and delete old Reconciler's.
+#
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+# Preliminary implementation plan:
+#   Implement nodePools
+#   Implement services
+#   Implement ingress
+#   Deprecate all the fields we want to remove from being specified directly on HumioClusterSpec.
+#   Bump API version to v1alpha2/v1beta1 and drop support for v1alpha1 where we drop support and clean up after the deprecated fields.
+#     Document upgrade procedure similar to https://cert-manager.io/docs/installation/upgrading/upgrading-0.16-1.0/
+#
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+##################################################################################################################################################################################################################################################
+# Notes for API versioning:
+#   Perhaps consider notice about kubectl bug: https://cert-manager.io/docs/installation/upgrading/upgrading-0.16-1.0/
+#   cert-manager indicates that k8s v1.16+ supports both extensions/v1 and "conversion webhooks" so we may want to require k8s 1.16+ where all they need to do is apply the new CRD and "helm upgrade".
+#     cert-manager creates a Service "cert-manager-webhook" which is configured in CustomResourceDefinitionSpec.Conversion. This converts older objects to the new API version.
+#     cert-manager controller handles only v1 not previous versions: https://github.com/jetstack/cert-manager/commit/a70298180a198317968d2bea1b69279ab52a2634#diff-d529ba9eada648c8249d2c5be260ca324e469eb4ea30e3a452b089cd81d50da4
+#       probably because they choose to store objects in version v1.
+#     Official docs: https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/
+#     "served" and "storage" fields dictate which object versions are served to users and what is actually stored.
+#       kubebuilder annotation seems to be used for defining the version we want to use for "storage": https://github.com/jetstack/cert-manager/blob/master/pkg/apis/certmanager/v1/types_certificate.go#L27
+#          Kubebuilder docs for "storage": https://book.kubebuilder.io/reference/generating-crd.html#multiple-versions
+#       Kubebuilder docs: https://book.kubebuilder.io/reference/generating-crd.html
+#   Our prerequisites is already k8s v1.16+: https://docs.humio.com/docs/installation/kubernetes/kubernetes-opertor-install/
+#   If we drop "core" from API group name: this will (most likely) require user migrating their objects themselves by backing up their resources and manually patching the "apiVersion" field.
+#
