@@ -194,6 +194,7 @@ spec:
 
   nodePools:
   - name: stateful
+    deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
     attachedServiceRoles: ["all-8080", "stateful-8080"]
     image: "humio/humio-core:1.18.1"
     affinity:
@@ -248,6 +249,7 @@ spec:
     - name: "KAFKA_SERVERS"
       value: "b-2-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-1-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092,b-3-my-zookeeper.c4.kafka.us-west-2.amazonaws.com:9092"
   - name: stateless
+    deploymentMethod: Pod # which is the default but could potentially allow use of "Deployment" objects
     attachedServiceRoles: ["all-8080", "stateless-8080", "stateless-9200"]
     image: "humio/humio-core:1.18.1"
     affinity:
