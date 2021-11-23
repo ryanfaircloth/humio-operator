@@ -64,6 +64,60 @@ const (
 	idpCertificateSecretNameSuffix          = "idp-certificate"
 )
 
+type HumioNodeManager interface {
+	GetImage() string
+	//GetPodList() corev1.PodList
+	//Labels() map[string]string
+}
+
+type HumioCluster struct {
+	Name string
+	humiov1alpha1.HumioNodeSpec
+}
+
+type HumioNodePool struct {
+	Name string
+	humiov1alpha1.HumioNodeSpec
+}
+
+func NewHumioNodeManagerFromHumioCluster(hc *humiov1alpha1.HumioCluster) HumioNodeManager {
+	return &HumioCluster{
+		Name: hc.Name,
+		HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+			Image: hc.Spec.Image,
+		},
+	}
+}
+
+func NewHumioNodeManagerFromHumioNodePool(hp *humiov1alpha1.HumioNodePoolSpec) HumioNodeManager {
+	return &HumioNodePool{
+		Name: hp.Name,
+		HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+			Image: hp.Image,
+		},
+	}
+}
+
+func (hc HumioCluster) GetImage() string {
+	//.. logic for humiocluster..
+	return hc.Image
+}
+
+func (hc HumioNodePool) GetImage() string {
+	//.. logic for humionodepool..
+	return hc.Image
+}
+
+//func (hc HumioCluster) Labels() string {
+//	//.. logic for humiocluster..
+//	return kubernetes.LabelsForHumio(hc.Name)
+//}
+
+func (hc HumioNodePool) Labels() string {
+	//.. logic for humionodepool..
+	return hc.Image
+}
+
 func setDefaults(hc *humiov1alpha1.HumioCluster) {
 	if hc.Spec.Image == "" && hc.Spec.ImageSource == nil {
 		hc.Spec.Image = image

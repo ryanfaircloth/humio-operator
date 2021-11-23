@@ -93,6 +93,13 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Set defaults
 	setDefaults(hc)
+
+	var humioNodeManagerList []HumioNodeManager
+	humioNodeManagerList = append(humioNodeManagerList, NewHumioNodeManagerFromHumioCluster(hc))
+	for _, nodePool := range hc.Spec.HumioNodePoolSpec {
+		humioNodeManagerList = append(humioNodeManagerList, NewHumioNodeManagerFromHumioNodePool(&nodePool))
+	}
+
 	emptyResult := reconcile.Result{}
 
 	defer func(ctx context.Context, humioClient humio.Client, hc *humiov1alpha1.HumioCluster) {

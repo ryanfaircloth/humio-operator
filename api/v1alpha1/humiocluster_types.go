@@ -34,8 +34,8 @@ const (
 
 // HumioClusterSpec defines the desired state of HumioCluster
 type HumioClusterSpec struct {
-	// Image is the desired humio container image, including the image tag
-	Image string `json:"image,omitempty"`
+	HumioNodeSpec
+
 	// ImageSource is the reference to an external source identifying the image
 	ImageSource *HumioImageSource `json:"imageSource,omitempty"`
 	// HelperImage is the desired helper container image, including image tag
@@ -163,6 +163,18 @@ type HumioClusterSpec struct {
 	// before being forcefully restarted. If using bucket storage, this should allow enough time for Humio to finish
 	// uploading data to bucket storage.
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+
+	HumioNodePoolSpec []HumioNodePoolSpec
+}
+
+type HumioNodeSpec struct {
+	// Image is the desired humio container image, including the image tag
+	Image string `json:"image,omitempty"`
+}
+
+type HumioNodePoolSpec struct {
+	Name string
+	HumioNodeSpec
 }
 
 // HumioHostnameSource is the possible references to a hostname value that is stored outside of the HumioCluster resource
