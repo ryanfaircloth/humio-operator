@@ -133,7 +133,9 @@ var _ = Describe("HumioCluster Controller", func() {
 					Namespace: key.Namespace,
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
-					Image: "humio/humio-core:1.18.4",
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						Image: "humio/humio-core:1.18.4",
+					},
 				},
 			}
 			ctx := context.Background()
@@ -882,7 +884,7 @@ var _ = Describe("HumioCluster Controller", func() {
 			// status.observedGeneration to equal at least that of the current resource version. This will avoid race
 			// conditions where the HumioCluster is updated and service is deleted mid-way through a reconcile.
 			incrementGenerationAndWaitForReconcileToSync(ctx, key, k8sClient)
-			Expect(k8sClient.Delete(ctx, constructService(&updatedHumioCluster))).To(Succeed())
+			Expect(k8sClient.Delete(ctx, constructService(NewHumioNodeManagerFromHumioCluster(&updatedHumioCluster)))).To(Succeed())
 
 			usingClusterBy(key.Name, "Confirming we can see the updated HumioCluster object")
 			Eventually(func() corev1.ServiceType {
@@ -918,7 +920,7 @@ var _ = Describe("HumioCluster Controller", func() {
 			// status.observedGeneration to equal at least that of the current resource version. This will avoid race
 			// conditions where the HumioCluster is updated and service is deleted mid-way through a reconcile.
 			incrementGenerationAndWaitForReconcileToSync(ctx, key, k8sClient)
-			Expect(k8sClient.Delete(ctx, constructService(&updatedHumioCluster))).To(Succeed())
+			Expect(k8sClient.Delete(ctx, constructService(NewHumioNodeManagerFromHumioCluster(&updatedHumioCluster)))).To(Succeed())
 
 			usingClusterBy(key.Name, "Confirming service gets recreated with correct Humio port")
 			Eventually(func() types.UID {
@@ -950,7 +952,7 @@ var _ = Describe("HumioCluster Controller", func() {
 			// status.observedGeneration to equal at least that of the current resource version. This will avoid race
 			// conditions where the HumioCluster is updated and service is deleted mid-way through a reconcile.
 			incrementGenerationAndWaitForReconcileToSync(ctx, key, k8sClient)
-			Expect(k8sClient.Delete(ctx, constructService(&updatedHumioCluster))).To(Succeed())
+			Expect(k8sClient.Delete(ctx, constructService(NewHumioNodeManagerFromHumioCluster(&updatedHumioCluster)))).To(Succeed())
 
 			usingClusterBy(key.Name, "Confirming service gets recreated with correct ES port")
 			Eventually(func() types.UID {
@@ -1097,12 +1099,13 @@ var _ = Describe("HumioCluster Controller", func() {
 			ctx := context.Background()
 			createAndBootstrapCluster(ctx, toCreate, true)
 			defer cleanupCluster(ctx, toCreate)
+			humioServiceAccoutName := fmt.Sprintf("%s-%s", key.Name, humioServiceAccountNameSuffix)
 
 			Eventually(func() error {
-				_, err := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountNameOrDefault(toCreate), key.Namespace)
+				_, err := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
 				return err
 			}, testTimeout, testInterval).Should(Succeed())
-			serviceAccount, _ := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountNameOrDefault(toCreate), key.Namespace)
+			serviceAccount, _ := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
 			Expect(serviceAccount.Annotations).Should(BeNil())
 
 			usingClusterBy(key.Name, "Adding an annotation successfully")
@@ -1116,7 +1119,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				return k8sClient.Update(ctx, &updatedHumioCluster)
 			}, testTimeout, testInterval).Should(Succeed())
 			Eventually(func() bool {
-				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountNameOrDefault(toCreate), key.Namespace)
+				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
 				_, ok := serviceAccount.Annotations["some-annotation"]
 				return ok
 			}, testTimeout, testInterval).Should(BeTrue())
@@ -1133,7 +1136,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				return k8sClient.Update(ctx, &updatedHumioCluster)
 			}, testTimeout, testInterval).Should(Succeed())
 			Eventually(func() map[string]string {
-				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountNameOrDefault(toCreate), key.Namespace)
+				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
 				return serviceAccount.Annotations
 			}, testTimeout, testInterval).Should(BeNil())
 		})
@@ -1894,7 +1897,7 @@ var _ = Describe("HumioCluster Controller", func() {
 			initialExpectedVolumesCount := 6
 			initialExpectedVolumeMountsCount := 4
 
-			humioVersion, _ := HumioVersionFromCluster(toCreate)
+			humioVersion, _ := HumioVersionFromString(toCreate.Spec.Image)
 			if ok, _ := humioVersion.AtLeast(HumioVersionWithNewTmpDir); !ok {
 				initialExpectedVolumesCount += 1
 				initialExpectedVolumeMountsCount += 1
@@ -2118,9 +2121,11 @@ var _ = Describe("HumioCluster Controller", func() {
 					Namespace: key.Namespace,
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
-					ExtraHumioVolumeMounts: []corev1.VolumeMount{
-						{
-							Name: "humio-data",
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						ExtraHumioVolumeMounts: []corev1.VolumeMount{
+							{
+								Name: "humio-data",
+							},
 						},
 					},
 				},
@@ -2149,10 +2154,12 @@ var _ = Describe("HumioCluster Controller", func() {
 					Namespace: key.Namespace,
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
-					ExtraHumioVolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "something-unique",
-							MountPath: humioAppPath,
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						ExtraHumioVolumeMounts: []corev1.VolumeMount{
+							{
+								Name:      "something-unique",
+								MountPath: humioAppPath,
+							},
 						},
 					},
 				},
@@ -2182,9 +2189,11 @@ var _ = Describe("HumioCluster Controller", func() {
 					Namespace: key.Namespace,
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
-					ExtraVolumes: []corev1.Volume{
-						{
-							Name: "humio-data",
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						ExtraVolumes: []corev1.Volume{
+							{
+								Name: "humio-data",
+							},
 						},
 					},
 				},
@@ -2215,7 +2224,9 @@ var _ = Describe("HumioCluster Controller", func() {
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
 					TargetReplicationFactor: 2,
-					NodeCount:               helpers.IntPtr(1),
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						NodeCount: helpers.IntPtr(1),
+					},
 				},
 			}
 			ctx := context.Background()
@@ -2243,16 +2254,18 @@ var _ = Describe("HumioCluster Controller", func() {
 					Namespace: key.Namespace,
 				},
 				Spec: humiov1alpha1.HumioClusterSpec{
-					DataVolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
-					DataVolumePersistentVolumeClaimSpecTemplate: corev1.PersistentVolumeClaimSpec{
-						AccessModes: []corev1.PersistentVolumeAccessMode{
-							"ReadWriteOnce",
+					HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+						DataVolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
 						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceStorage: *resource.NewQuantity(10*1024*1024*1024, resource.BinarySI),
+						DataVolumePersistentVolumeClaimSpecTemplate: corev1.PersistentVolumeClaimSpec{
+							AccessModes: []corev1.PersistentVolumeAccessMode{
+								"ReadWriteOnce",
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceStorage: *resource.NewQuantity(10*1024*1024*1024, resource.BinarySI),
+								},
 							},
 						},
 					},
@@ -3618,42 +3631,44 @@ func constructBasicSingleNodeHumioCluster(key types.NamespacedName, useAutoCreat
 			Namespace: key.Namespace,
 		},
 		Spec: humiov1alpha1.HumioClusterSpec{
-			Image:                   image,
-			ExtraKafkaConfigs:       "security.protocol=PLAINTEXT",
-			NodeCount:               helpers.IntPtr(1),
 			TargetReplicationFactor: 1,
-			EnvironmentVariables: []corev1.EnvVar{
-				{
-					Name:  "HUMIO_JVM_ARGS",
-					Value: "-Xss2m -Xms256m -Xmx2g -server -XX:+UseParallelGC -XX:+ScavengeBeforeFullGC -XX:+DisableExplicitGC -Dzookeeper.client.secure=false",
+			HumioNodeSpec: humiov1alpha1.HumioNodeSpec{
+				Image:             image,
+				ExtraKafkaConfigs: "security.protocol=PLAINTEXT",
+				NodeCount:         helpers.IntPtr(1),
+				EnvironmentVariables: []corev1.EnvVar{
+					{
+						Name:  "HUMIO_JVM_ARGS",
+						Value: "-Xss2m -Xms256m -Xmx2g -server -XX:+UseParallelGC -XX:+ScavengeBeforeFullGC -XX:+DisableExplicitGC -Dzookeeper.client.secure=false",
+					},
+					{
+						Name:  "ZOOKEEPER_URL",
+						Value: "humio-cp-zookeeper-0.humio-cp-zookeeper-headless.default:2181",
+					},
+					{
+						Name:  "KAFKA_SERVERS",
+						Value: "humio-cp-kafka-0.humio-cp-kafka-headless.default:9092",
+					},
+					{
+						Name:  "HUMIO_KAFKA_TOPIC_PREFIX",
+						Value: key.Name,
+					},
+					{
+						Name:  "AUTHENTICATION_METHOD",
+						Value: "single-user",
+					},
+					{
+						Name:  "SINGLE_USER_PASSWORD",
+						Value: "password",
+					},
+					{
+						Name:  "ENABLE_IOC_SERVICE",
+						Value: "false",
+					},
 				},
-				{
-					Name:  "ZOOKEEPER_URL",
-					Value: "humio-cp-zookeeper-0.humio-cp-zookeeper-headless.default:2181",
+				DataVolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
-				{
-					Name:  "KAFKA_SERVERS",
-					Value: "humio-cp-kafka-0.humio-cp-kafka-headless.default:9092",
-				},
-				{
-					Name:  "HUMIO_KAFKA_TOPIC_PREFIX",
-					Value: key.Name,
-				},
-				{
-					Name:  "AUTHENTICATION_METHOD",
-					Value: "single-user",
-				},
-				{
-					Name:  "SINGLE_USER_PASSWORD",
-					Value: "password",
-				},
-				{
-					Name:  "ENABLE_IOC_SERVICE",
-					Value: "false",
-				},
-			},
-			DataVolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
 	}

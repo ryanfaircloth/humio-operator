@@ -134,9 +134,9 @@ func (r *HumioClusterReconciler) setNodeCount(ctx context.Context, nodeCount int
 	return nil
 }
 
-func (r *HumioClusterReconciler) setPod(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
+func (r *HumioClusterReconciler) setPod(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
 	r.Log.Info("setting cluster pod status")
-	pods, err := kubernetes.ListPods(ctx, r, hc.Namespace, kubernetes.MatchingLabelsForHumio(hc.Name))
+	pods, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
 	if err != nil {
 		r.Log.Error(err, "unable to set pod status")
 		return err
@@ -155,7 +155,7 @@ func (r *HumioClusterReconciler) setPod(ctx context.Context, hc *humiov1alpha1.H
 			}
 			podStatus.NodeId = nodeId
 		}
-		if pvcsEnabled(hc) {
+		if hnp.PVCsEnabled() {
 			for _, volume := range pod.Spec.Volumes {
 				if volume.Name == "humio-data" {
 					if volume.PersistentVolumeClaim != nil {

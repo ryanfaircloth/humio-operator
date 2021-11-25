@@ -84,14 +84,14 @@ type nodeUUIDTemplateVars struct {
 // only when using ephemeral disks. If we're using persistent storage, then we rely on Humio to generate the UUID.
 // Note that relying on PVCs may not be good enough here as it's possible to have persistent storage using hostPath.
 // For this reason, we rely on the USING_EPHEMERAL_DISKS environment variable.
-func constructContainerArgs(hc *humiov1alpha1.HumioCluster, podEnvVars []corev1.EnvVar) ([]string, error) {
+func constructContainerArgs(hnp *HumioNodePool, podEnvVars []corev1.EnvVar) ([]string, error) {
 	containerArgs := []string{"-c"}
 	if envVarHasValue(podEnvVars, "USING_EPHEMERAL_DISKS", "true") {
-		nodeUUIDPrefix, err := constructNodeUUIDPrefix(hc)
+		nodeUUIDPrefix, err := constructNodeUUIDPrefix(hnp)
 		if err != nil {
 			return []string{""}, fmt.Errorf("unable to construct node UUID: %s", err)
 		}
-		if hc.Spec.DisableInitContainer {
+		if hnp.InitContainerDisabled() {
 			containerArgs = append(containerArgs, fmt.Sprintf("export ZOOKEEPER_PREFIX_FOR_NODE_UUID=%s && exec bash %s/run.sh",
 				nodeUUIDPrefix, humioAppPath))
 		} else {
@@ -99,7 +99,7 @@ func constructContainerArgs(hc *humiov1alpha1.HumioCluster, podEnvVars []corev1.
 				sharedPath, nodeUUIDPrefix, humioAppPath))
 		}
 	} else {
-		if hc.Spec.DisableInitContainer {
+		if hnp.InitContainerDisabled() {
 			containerArgs = append(containerArgs, fmt.Sprintf("exec bash %s/run.sh",
 				humioAppPath))
 		} else {
@@ -113,8 +113,8 @@ func constructContainerArgs(hc *humiov1alpha1.HumioCluster, podEnvVars []corev1.
 // constructNodeUUIDPrefix checks the value of the nodeUUID prefix and attempts to render it as a template. If the template
 // renders {{.Zone}} as the string set to containsZoneIdentifier, then we can be assured that the desired outcome is
 // that the zone in included inside the nodeUUID prefix.
-func constructNodeUUIDPrefix(hc *humiov1alpha1.HumioCluster) (string, error) {
-	prefix := nodeUUIDPrefixOrDefault(hc)
+func constructNodeUUIDPrefix(hnp *HumioNodePool) (string, error) {
+	prefix := hnp.GetNodeUUIDPrefix()
 	containsZoneIdentifier := "containsZone"
 
 	t := template.Must(template.New("prefix").Parse(prefix))
@@ -138,11 +138,11 @@ func constructNodeUUIDPrefix(hc *humiov1alpha1.HumioCluster) (string, error) {
 	return nodeUUIDPrefix, nil
 }
 
-func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachments *podAttachments) (*corev1.Pod, error) {
+func constructPod(hnp *HumioNodePool, humioNodeName string, attachments *podAttachments) (*corev1.Pod, error) {
 	var pod corev1.Pod
 	mode := int32(420)
 	productVersion := "unknown"
-	imageSplit := strings.SplitN(hc.Spec.Image, ":", 2)
+	imageSplit := strings.SplitN(hnp.GetImage(), ":", 2)
 	if len(imageSplit) == 2 {
 		productVersion = imageSplit[1]
 	}
@@ -151,21 +151,21 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 	pod = corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        humioNodeName,
-			Namespace:   hc.Namespace,
-			Labels:      kubernetes.LabelsForHumio(hc.Name),
-			Annotations: kubernetes.AnnotationsForHumio(hc.Spec.PodAnnotations, productVersion),
+			Namespace:   hnp.GetNamespace(),
+			Labels:      hnp.GetLabels(),
+			Annotations: kubernetes.AnnotationsForHumio(hnp.GetPodAnnotations(), productVersion),
 		},
 		Spec: corev1.PodSpec{
-			ShareProcessNamespace: shareProcessNamespaceOrDefault(hc),
-			ServiceAccountName:    humioServiceAccountNameOrDefault(hc),
-			ImagePullSecrets:      imagePullSecretsOrDefault(hc),
-			Subdomain:             headlessServiceName(hc.Name),
+			ShareProcessNamespace: hnp.GetShareProcessNamespace(),
+			ServiceAccountName:    hnp.GetHumioServiceAccountName(),
+			ImagePullSecrets:      hnp.GetImagePullSecrets(),
+			Subdomain:             headlessServiceName(hnp.GetClusterName()),
 			Hostname:              humioNodeName,
 			Containers: []corev1.Container{
 				{
 					Name:            authContainerName,
-					Image:           helperImageOrDefault(hc),
-					ImagePullPolicy: imagePullPolicyOrDefault(hc),
+					Image:           hnp.GetHelperImage(),
+					ImagePullPolicy: hnp.GetImagePullPolicy(),
 					Env: []corev1.EnvVar{
 						{
 							Name: "NAMESPACE",
@@ -195,11 +195,11 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 						},
 						{
 							Name:  "CLUSTER_NAME",
-							Value: hc.Name,
+							Value: hnp.GetClusterName(),
 						},
 						{
 							Name:  "HUMIO_NODE_URL",
-							Value: fmt.Sprintf("%s://$(POD_NAME):%d/", strings.ToLower(string(getProbeScheme(hc))), humioPort),
+							Value: fmt.Sprintf("%s://$(POD_NAME):%d/", strings.ToLower(string(hnp.GetProbeScheme())), humioPort),
 						},
 					},
 					VolumeMounts: []corev1.VolumeMount{
@@ -250,12 +250,12 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 							corev1.ResourceMemory: *resource.NewQuantity(150*1024*1024, resource.BinarySI),
 						},
 					},
-					SecurityContext: containerSecurityContextOrDefault(hc),
+					SecurityContext: hnp.GetContainerSecurityContext(),
 				},
 				{
 					Name:            humioContainerName,
-					Image:           hc.Spec.Image,
-					ImagePullPolicy: imagePullPolicyOrDefault(hc),
+					Image:           hnp.GetImage(),
+					ImagePullPolicy: hnp.GetImagePullPolicy(),
 					Command:         []string{"/bin/sh"},
 					Ports: []corev1.ContainerPort{
 						{
@@ -269,7 +269,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 							Protocol:      "TCP",
 						},
 					},
-					Env: envVarList(hc),
+					Env: hnp.GetEnvironmentVariables(),
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "humio-data",
@@ -286,11 +286,11 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 							ReadOnly:  false,
 						},
 					},
-					ReadinessProbe:  containerReadinessProbeOrDefault(hc),
-					LivenessProbe:   containerLivenessProbeOrDefault(hc),
-					StartupProbe:    containerStartupProbeOrDefault(hc),
-					Resources:       podResourcesOrDefault(hc),
-					SecurityContext: containerSecurityContextOrDefault(hc),
+					ReadinessProbe:  hnp.GetContainerReadinessProbe(),
+					LivenessProbe:   hnp.GetContainerLivenessProbe(),
+					StartupProbe:    hnp.GetContainerStartupProbe(),
+					Resources:       hnp.GetResources(),
+					SecurityContext: hnp.GetContainerSecurityContext(),
 				},
 			},
 			Volumes: []corev1.Volume{
@@ -312,10 +312,10 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 					},
 				},
 			},
-			Affinity:                      affinityOrDefault(hc),
-			Tolerations:                   tolerationsOrDefault(hc),
-			SecurityContext:               podSecurityContextOrDefault(hc),
-			TerminationGracePeriodSeconds: terminationGracePeriodSecondsOrDefault(hc),
+			Affinity:                      hnp.GetAffinity(),
+			Tolerations:                   hnp.GetTolerations(),
+			SecurityContext:               hnp.GetPodSecurityContext(),
+			TerminationGracePeriodSeconds: hnp.GetTerminationGracePeriodSeconds(),
 		},
 	}
 
@@ -331,8 +331,8 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 
 	// If envFrom is set on the HumioCluster spec, add it to the pod spec. Add an annotation with the hash of the env
 	// var values from the secret or configmap to trigger pod restarts when they change
-	if len(hc.Spec.EnvironmentVariablesSource) > 0 {
-		pod.Spec.Containers[humioIdx].EnvFrom = hc.Spec.EnvironmentVariablesSource
+	if len(hnp.GetEnvironmentVariablesSource()) > 0 {
+		pod.Spec.Containers[humioIdx].EnvFrom = hnp.GetEnvironmentVariablesSource()
 		if attachments.envVarSourceData != nil {
 			b, err := json.Marshal(attachments.envVarSourceData)
 			if err != nil {
@@ -356,19 +356,19 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			Name: "idp-cert-volume",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName:  idpCertificateSecretNameOrDefault(hc),
+					SecretName:  hnp.GetIDPCertificateSecretName(),
 					DefaultMode: &mode,
 				},
 			},
 		})
 	}
 
-	if !hc.Spec.DisableInitContainer {
+	if !hnp.InitContainerDisabled() {
 		pod.Spec.InitContainers = []corev1.Container{
 			{
 				Name:            initContainerName,
-				Image:           helperImageOrDefault(hc),
-				ImagePullPolicy: imagePullPolicyOrDefault(hc),
+				Image:           hnp.GetHelperImage(),
+				ImagePullPolicy: hnp.GetImagePullPolicy(),
 				Env: []corev1.EnvVar{
 					{
 						Name:  "MODE",
@@ -433,7 +433,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		})
 	}
 
-	if extraKafkaConfigsOrDefault(hc) != "" {
+	if hnp.GetExtraKafkaConfigs() != "" {
 		pod.Spec.Containers[humioIdx].Env = append(pod.Spec.Containers[humioIdx].Env, corev1.EnvVar{
 			Name:  "EXTRA_KAFKA_CONFIGS_FILE",
 			Value: fmt.Sprintf("/var/lib/humio/extra-kafka-configs-configmap/%s", extraKafkaPropertiesFilename),
@@ -448,7 +448,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: extraKafkaConfigsConfigMapName(hc),
+						Name: hnp.GetExtraKafkaConfigsConfigMapName(),
 					},
 					DefaultMode: &mode,
 				},
@@ -456,7 +456,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		})
 	}
 
-	if viewGroupPermissionsOrDefault(hc) != "" {
+	if hnp.GetViewGroupPermissions() != "" {
 		pod.Spec.Containers[humioIdx].Env = append(pod.Spec.Containers[humioIdx].Env, corev1.EnvVar{
 			Name:  "READ_GROUP_PERMISSIONS_FROM_FILE",
 			Value: "true",
@@ -472,7 +472,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: viewGroupPermissionsConfigMapName(hc),
+						Name: hnp.GetViewGroupPermissionsConfigMapName(),
 					},
 					DefaultMode: &mode,
 				},
@@ -480,7 +480,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		})
 	}
 
-	for _, sidecar := range sidecarContainersOrDefault(hc) {
+	for _, sidecar := range hnp.GetSidecarContainers() {
 		for _, existingContainer := range pod.Spec.Containers {
 			if sidecar.Name == existingContainer.Name {
 				return &corev1.Pod{}, fmt.Errorf("sidecarContainer conflicts with existing name: %s", sidecar.Name)
@@ -490,7 +490,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
 	}
 
-	for _, volumeMount := range extraHumioVolumeMountsOrDefault(hc) {
+	for _, volumeMount := range hnp.GetExtraHumioVolumeMounts() {
 		for _, existingVolumeMount := range pod.Spec.Containers[humioIdx].VolumeMounts {
 			if existingVolumeMount.Name == volumeMount.Name {
 				return &corev1.Pod{}, fmt.Errorf("extraHumioVolumeMount conflicts with existing name: %s", existingVolumeMount.Name)
@@ -502,7 +502,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		pod.Spec.Containers[humioIdx].VolumeMounts = append(pod.Spec.Containers[humioIdx].VolumeMounts, volumeMount)
 	}
 
-	for _, volume := range extraVolumesOrDefault(hc) {
+	for _, volume := range hnp.GetExtraVolumes() {
 		for _, existingVolume := range pod.Spec.Volumes {
 			if existingVolume.Name == volume.Name {
 				return &corev1.Pod{}, fmt.Errorf("extraVolume conflicts with existing name: %s", existingVolume.Name)
@@ -511,7 +511,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
 	}
 
-	if helpers.TLSEnabled(hc) {
+	if hnp.TLSEnabled() {
 		pod.Spec.Containers[humioIdx].Env = append(pod.Spec.Containers[humioIdx].Env, corev1.EnvVar{
 			Name:  "TLS_TRUSTSTORE_LOCATION",
 			Value: fmt.Sprintf("/var/lib/humio/tls-certificate-secret/%s", "truststore.jks"),
@@ -525,7 +525,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: fmt.Sprintf("%s-keystore-passphrase", hc.Name),
+						Name: fmt.Sprintf("%s-keystore-passphrase", hnp.GetClusterName()),
 					},
 					Key: "passphrase",
 				},
@@ -536,7 +536,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: fmt.Sprintf("%s-keystore-passphrase", hc.Name),
+						Name: fmt.Sprintf("%s-keystore-passphrase", hnp.GetClusterName()),
 					},
 					Key: "passphrase",
 				},
@@ -547,7 +547,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: fmt.Sprintf("%s-keystore-passphrase", hc.Name),
+						Name: fmt.Sprintf("%s-keystore-passphrase", hnp.GetClusterName()),
 					},
 					Key: "passphrase",
 				},
@@ -586,7 +586,7 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 			Name: "ca-cert",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName:  hc.Name,
+					SecretName:  hnp.GetClusterName(),
 					DefaultMode: &mode,
 					Items: []corev1.KeyToPath{
 						{
@@ -611,13 +611,13 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 		})
 	}
 
-	containerArgs, err := constructContainerArgs(hc, pod.Spec.Containers[humioIdx].Env)
+	containerArgs, err := constructContainerArgs(hnp, pod.Spec.Containers[humioIdx].Env)
 	if err != nil {
 		return &corev1.Pod{}, fmt.Errorf("unable to construct node container args: %s", err)
 	}
 	pod.Spec.Containers[humioIdx].Args = containerArgs
 
-	humioVersion, _ := HumioVersionFromCluster(hc)
+	humioVersion, _ := HumioVersionFromString(hnp.GetImage())
 	if ok, _ := humioVersion.AtLeast(HumioVersionWithNewTmpDir); !ok {
 		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 			Name:         "humio-tmp",
@@ -633,18 +633,18 @@ func constructPod(hc *humiov1alpha1.HumioCluster, humioNodeName string, attachme
 	return &pod, nil
 }
 
-func volumeSource(hc *humiov1alpha1.HumioCluster, podList []corev1.Pod, pvcList []corev1.PersistentVolumeClaim) (corev1.VolumeSource, error) {
-	if pvcsEnabled(hc) && hc.Spec.DataVolumeSource != (corev1.VolumeSource{}) {
+func volumeSource(hnp *HumioNodePool, podList []corev1.Pod, pvcList []corev1.PersistentVolumeClaim) (corev1.VolumeSource, error) {
+	if hnp.PVCsEnabled() && hnp.GetDataVolumeSource() != (corev1.VolumeSource{}) {
 		return corev1.VolumeSource{}, fmt.Errorf("cannot have both dataVolumePersistentVolumeClaimSpecTemplate and dataVolumeSource defined")
 	}
-	if pvcsEnabled(hc) {
+	if hnp.PVCsEnabled() {
 		pvcName, err := findNextAvailablePvc(pvcList, podList)
 		if err != nil {
 			return corev1.VolumeSource{}, err
 		}
-		return dataVolumePersistentVolumeClaimSpecTemplateOrDefault(hc, pvcName), nil
+		return hnp.GetDataVolumePersistentVolumeClaimSpecTemplate(pvcName), nil
 	}
-	return dataVolumeSourceOrDefault(hc), nil
+	return hnp.GetDataVolumeSource(), nil
 }
 
 // envVarValue returns the value of the given environment variable
@@ -678,11 +678,11 @@ func envVarHasKey(envVars []corev1.EnvVar, key string) bool {
 
 // sanitizePod removes known nondeterministic fields from a pod and returns it.
 // This modifies the input pod object before returning it.
-func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
+func sanitizePod(hnp *HumioNodePool, pod *corev1.Pod) *corev1.Pod {
 	// TODO: For volume mount containing service account secret, set name to empty string
 	sanitizedVolumes := make([]corev1.Volume, 0)
 	emptyPersistentVolumeClaimSource := corev1.PersistentVolumeClaimVolumeSource{}
-	hostname := fmt.Sprintf("%s-core-%s", hc.Name, "")
+	hostname := fmt.Sprintf("%s-core-%s", hnp.GetNodePoolName(), "")
 	mode := int32(420)
 
 	for idx, container := range pod.Spec.Containers {
@@ -692,7 +692,7 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 				if envVar.Name == "EXTERNAL_URL" {
 					sanitizedEnvVars = append(sanitizedEnvVars, corev1.EnvVar{
 						Name:  "EXTERNAL_URL",
-						Value: fmt.Sprintf("%s://%s-core-%s.%s.%s:%d", strings.ToLower(string(getProbeScheme(hc))), hc.Name, "", headlessServiceName(hc.Name), hc.Namespace, humioPort),
+						Value: fmt.Sprintf("%s://%s-core-%s.%s.%s:%d", strings.ToLower(string(hnp.GetProbeScheme())), hnp.GetNodePoolName(), "", headlessServiceName(hnp.GetClusterName()), hnp.GetNamespace(), humioPort),
 					})
 				} else {
 					sanitizedEnvVars = append(sanitizedEnvVars, corev1.EnvVar{
@@ -708,7 +708,7 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 				if envVar.Name == "HUMIO_NODE_URL" {
 					sanitizedEnvVars = append(sanitizedEnvVars, corev1.EnvVar{
 						Name:  "HUMIO_NODE_URL",
-						Value: fmt.Sprintf("%s://%s-core-%s.%s:%d/", strings.ToLower(string(getProbeScheme(hc))), hc.Name, "", hc.Namespace, humioPort),
+						Value: fmt.Sprintf("%s://%s-core-%s.%s:%d/", strings.ToLower(string(hnp.GetProbeScheme())), hnp.GetNodePoolName(), "", hnp.GetNamespace(), humioPort),
 					})
 				} else {
 					sanitizedEnvVars = append(sanitizedEnvVars, envVar)
@@ -724,12 +724,12 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 		if volume.Name == "humio-data" && reflect.DeepEqual(volume.PersistentVolumeClaim, emptyPersistentVolumeClaimSource) {
 			sanitizedVolumes = append(sanitizedVolumes, corev1.Volume{
 				Name:         "humio-data",
-				VolumeSource: dataVolumeSourceOrDefault(hc),
+				VolumeSource: hnp.GetDataVolumeSource(),
 			})
 		} else if volume.Name == "humio-data" && !reflect.DeepEqual(volume.PersistentVolumeClaim, emptyPersistentVolumeClaimSource) {
 			sanitizedVolumes = append(sanitizedVolumes, corev1.Volume{
 				Name:         "humio-data",
-				VolumeSource: dataVolumePersistentVolumeClaimSpecTemplateOrDefault(hc, ""),
+				VolumeSource: hnp.GetDataVolumePersistentVolumeClaimSpecTemplate(""),
 			})
 		} else if volume.Name == "tls-cert" {
 			sanitizedVolumes = append(sanitizedVolumes, corev1.Volume{
@@ -746,7 +746,7 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 				Name: "init-service-account-secret",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName:  fmt.Sprintf("%s-init-%s", hc.Name, ""),
+						SecretName:  fmt.Sprintf("%s-init-%s", hnp.GetNodePoolName(), ""),
 						DefaultMode: &mode,
 					},
 				},
@@ -756,7 +756,7 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 				Name: "auth-service-account-secret",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName:  fmt.Sprintf("%s-auth-%s", hc.Name, ""),
+						SecretName:  fmt.Sprintf("%s-auth-%s", hnp.GetNodePoolName(), ""),
 						DefaultMode: &mode,
 					},
 				},
@@ -778,14 +778,14 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 	pod.Spec.EnableServiceLinks = nil
 	pod.Spec.PreemptionPolicy = nil
 	pod.Spec.DeprecatedServiceAccount = ""
-	pod.Spec.Tolerations = tolerationsOrDefault(hc)
+	pod.Spec.Tolerations = hnp.GetTolerations()
 	for i := range pod.Spec.InitContainers {
-		pod.Spec.InitContainers[i].ImagePullPolicy = imagePullPolicyOrDefault(hc)
+		pod.Spec.InitContainers[i].ImagePullPolicy = hnp.GetImagePullPolicy()
 		pod.Spec.InitContainers[i].TerminationMessagePath = ""
 		pod.Spec.InitContainers[i].TerminationMessagePolicy = ""
 	}
 	for i := range pod.Spec.Containers {
-		pod.Spec.Containers[i].ImagePullPolicy = imagePullPolicyOrDefault(hc)
+		pod.Spec.Containers[i].ImagePullPolicy = hnp.GetImagePullPolicy()
 		pod.Spec.Containers[i].TerminationMessagePath = ""
 		pod.Spec.Containers[i].TerminationMessagePolicy = ""
 	}
@@ -794,21 +794,21 @@ func sanitizePod(hc *humiov1alpha1.HumioCluster, pod *corev1.Pod) *corev1.Pod {
 }
 
 // podSpecAsSHA256 looks at the pod spec minus known nondeterministic fields and returns a sha256 hash of the spec
-func podSpecAsSHA256(hc *humiov1alpha1.HumioCluster, sourcePod corev1.Pod) string {
+func podSpecAsSHA256(hnp *HumioNodePool, sourcePod corev1.Pod) string {
 	pod := sourcePod.DeepCopy()
-	sanitizedPod := sanitizePod(hc, pod)
+	sanitizedPod := sanitizePod(hnp, pod)
 	b, _ := json.Marshal(sanitizedPod.Spec)
 	return helpers.AsSHA256(string(b))
 }
 
-func (r *HumioClusterReconciler) createPod(ctx context.Context, hc *humiov1alpha1.HumioCluster, attachments *podAttachments) (*corev1.Pod, error) {
-	podName, err := findHumioNodeName(ctx, r, hc)
+func (r *HumioClusterReconciler) createPod(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, attachments *podAttachments) (*corev1.Pod, error) {
+	podName, err := findHumioNodeName(ctx, r, hnp)
 	if err != nil {
 		r.Log.Error(err, "unable to find pod name")
 		return &corev1.Pod{}, err
 	}
 
-	pod, err := constructPod(hc, podName, attachments)
+	pod, err := constructPod(hnp, podName, attachments)
 	if err != nil {
 		r.Log.Error(err, "unable to construct pod")
 		return &corev1.Pod{}, err
@@ -819,7 +819,7 @@ func (r *HumioClusterReconciler) createPod(ctx context.Context, hc *humiov1alpha
 		return &corev1.Pod{}, err
 	}
 	r.Log.Info(fmt.Sprintf("pod %s will use attachments %+v", pod.Name, attachments))
-	pod.Annotations[podHashAnnotation] = podSpecAsSHA256(hc, *pod)
+	pod.Annotations[podHashAnnotation] = podSpecAsSHA256(hnp, *pod)
 	if err := controllerutil.SetControllerReference(hc, pod, r.Scheme()); err != nil {
 		r.Log.Error(err, "could not set controller reference")
 		return &corev1.Pod{}, err
@@ -854,7 +854,7 @@ func (r *HumioClusterReconciler) createPod(ctx context.Context, hc *humiov1alpha
 
 // waitForNewPod can be used to wait for a new pod to be created after the create call is issued. It is important that
 // the previousPodList contains the list of pods prior to when the new pod was created
-func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hc *humiov1alpha1.HumioCluster, previousPodList []corev1.Pod, expectedPod *corev1.Pod) error {
+func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hnp *HumioNodePool, previousPodList []corev1.Pod, expectedPod *corev1.Pod) error {
 	// We must check only pods that were running prior to the new pod being created, and we must only include pods that
 	// were running the same revision as the newly created pod. This is because there may be pods under the previous
 	// revision that were still terminating when the new pod was created
@@ -869,7 +869,7 @@ func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hc *humiov1a
 
 	for i := 0; i < waitForPodTimeoutSeconds; i++ {
 		var podsMatchingRevisionCount int
-		latestPodList, err := kubernetes.ListPods(ctx, r, hc.Namespace, kubernetes.MatchingLabelsForHumio(hc.Name))
+		latestPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
 		if err != nil {
 			return err
 		}
@@ -887,7 +887,7 @@ func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hc *humiov1a
 	return fmt.Errorf("timed out waiting to validate new pod was created")
 }
 
-func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, pod corev1.Pod, desiredPod corev1.Pod) (bool, error) {
+func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, pod corev1.Pod, desiredPod corev1.Pod) (bool, error) {
 	if _, ok := pod.Annotations[podHashAnnotation]; !ok {
 		return false, fmt.Errorf("did not find annotation with pod hash")
 	}
@@ -898,7 +898,7 @@ func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, pod c
 	var revisionMatches bool
 	var envVarSourceMatches bool
 
-	desiredPodHash := podSpecAsSHA256(hc, desiredPod)
+	desiredPodHash := podSpecAsSHA256(hnp, desiredPod)
 	existingPodRevision, err := r.getHumioClusterPodRevision(hc)
 	if err != nil {
 		return false, err
@@ -926,8 +926,8 @@ func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, pod c
 
 	currentPodCopy := pod.DeepCopy()
 	desiredPodCopy := desiredPod.DeepCopy()
-	sanitizedCurrentPod := sanitizePod(hc, currentPodCopy)
-	sanitizedDesiredPod := sanitizePod(hc, desiredPodCopy)
+	sanitizedCurrentPod := sanitizePod(hnp, currentPodCopy)
+	sanitizedDesiredPod := sanitizePod(hnp, desiredPodCopy)
 	podSpecDiff := cmp.Diff(sanitizedCurrentPod.Spec, sanitizedDesiredPod.Spec)
 	if !specMatches {
 		r.Log.Info(fmt.Sprintf("pod annotation %s does not match desired pod: got %+v, expected %+v", podHashAnnotation, pod.Annotations[podHashAnnotation], desiredPodHash), "podSpecDiff", podSpecDiff)
@@ -964,18 +964,18 @@ func (r *HumioClusterReconciler) getRestartPolicyFromPodInspection(pod, desiredP
 	return PodRestartPolicyRolling, nil
 }
 
-func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hc *humiov1alpha1.HumioCluster, foundPodList []corev1.Pod, attachments *podAttachments) (podLifecycleState, error) {
+func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, foundPodList []corev1.Pod, attachments *podAttachments) (podLifecycleState, error) {
 	for _, pod := range foundPodList {
 		// only consider pods not already being deleted
 		if pod.DeletionTimestamp == nil {
 			// if pod spec differs, we want to delete it
-			desiredPod, err := constructPod(hc, "", attachments)
+			desiredPod, err := constructPod(hnp, "", attachments)
 			if err != nil {
 				r.Log.Error(err, "could not construct pod")
 				return podLifecycleState{}, err
 			}
 
-			podsMatchTest, err := r.podsMatch(hc, pod, *desiredPod)
+			podsMatchTest, err := r.podsMatch(hc, hnp, pod, *desiredPod)
 			if err != nil {
 				r.Log.Error(err, "failed to check if pods match")
 			}
@@ -997,14 +997,14 @@ func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hc *humiov1alpha1.H
 	return podLifecycleState{}, nil
 }
 
-func findHumioNodeName(ctx context.Context, c client.Client, hc *humiov1alpha1.HumioCluster) (string, error) {
+func findHumioNodeName(ctx context.Context, c client.Client, hnp *HumioNodePool) (string, error) {
 	// if we do not have TLS enabled, append a random suffix
-	if !helpers.TLSEnabled(hc) {
-		return fmt.Sprintf("%s-core-%s", hc.Name, kubernetes.RandomString()), nil
+	if !hnp.TLSEnabled() {
+		return fmt.Sprintf("%s-core-%s", hnp.GetNodePoolName(), kubernetes.RandomString()), nil
 	}
 
 	// if TLS is enabled, use the first available TLS certificate
-	certificates, err := kubernetes.ListCertificates(ctx, c, hc.Namespace, kubernetes.MatchingLabelsForHumio(hc.Name))
+	certificates, err := kubernetes.ListCertificates(ctx, c, hnp.GetNamespace(), hnp.GetLabels())
 	if err != nil {
 		return "", err
 	}
@@ -1020,7 +1020,7 @@ func findHumioNodeName(ctx context.Context, c client.Client, hc *humiov1alpha1.H
 
 		existingPod := &corev1.Pod{}
 		err := c.Get(ctx, types.NamespacedName{
-			Namespace: hc.Namespace,
+			Namespace: hnp.GetNamespace(),
 			Name:      certificate.Name,
 		}, existingPod)
 		if err != nil {
@@ -1035,17 +1035,17 @@ func findHumioNodeName(ctx context.Context, c client.Client, hc *humiov1alpha1.H
 	return "", fmt.Errorf("found %d certificates but none of them are available to use", len(certificates))
 }
 
-func (r *HumioClusterReconciler) newPodAttachments(ctx context.Context, hc *humiov1alpha1.HumioCluster, foundPodList []corev1.Pod) (*podAttachments, error) {
-	pvcList, err := r.pvcList(ctx, hc)
+func (r *HumioClusterReconciler) newPodAttachments(ctx context.Context, hnp *HumioNodePool, foundPodList []corev1.Pod) (*podAttachments, error) {
+	pvcList, err := r.pvcList(ctx, hnp)
 	if err != nil {
 		return &podAttachments{}, fmt.Errorf("problem getting pvc list: %s", err)
 	}
 	r.Log.Info(fmt.Sprintf("attempting to get volume source, pvc count is %d, pod count is %d", len(pvcList), len(foundPodList)))
-	volumeSource, err := volumeSource(hc, foundPodList, pvcList)
+	volumeSource, err := volumeSource(hnp, foundPodList, pvcList)
 	if err != nil {
 		return &podAttachments{}, fmt.Errorf("unable to construct data volume source for HumioCluster: %s", err)
 	}
-	authSASecretName, err := r.getAuthServiceAccountSecretName(ctx, hc)
+	authSASecretName, err := r.getAuthServiceAccountSecretName(ctx, hnp)
 	if err != nil {
 		return &podAttachments{}, fmt.Errorf("unable get auth service account secret for HumioCluster: %s", err)
 
@@ -1053,14 +1053,14 @@ func (r *HumioClusterReconciler) newPodAttachments(ctx context.Context, hc *humi
 	if authSASecretName == "" {
 		return &podAttachments{}, errors.New("unable to create Pod for HumioCluster: the auth service account secret does not exist")
 	}
-	if hc.Spec.DisableInitContainer {
+	if hnp.InitContainerDisabled() {
 		return &podAttachments{
 			dataVolumeSource:             volumeSource,
 			authServiceAccountSecretName: authSASecretName,
 		}, nil
 	}
 
-	initSASecretName, err := r.getInitServiceAccountSecretName(ctx, hc)
+	initSASecretName, err := r.getInitServiceAccountSecretName(ctx, hnp)
 	if err != nil {
 		return &podAttachments{}, fmt.Errorf("unable get init service account secret for HumioCluster: %s", err)
 	}
@@ -1068,7 +1068,7 @@ func (r *HumioClusterReconciler) newPodAttachments(ctx context.Context, hc *humi
 		return &podAttachments{}, errors.New("unable to create Pod for HumioCluster: the init service account secret does not exist")
 	}
 
-	envVarSourceData, err := r.getEnvVarSource(ctx, hc)
+	envVarSourceData, err := r.getEnvVarSource(ctx, hnp)
 	if err != nil {
 		return &podAttachments{}, fmt.Errorf("unable to create Pod for HumioCluster: %s", err)
 	}

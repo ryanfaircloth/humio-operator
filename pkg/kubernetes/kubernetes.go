@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	NodeIdLabelName = "humio.com/node-id"
+	NodeIdLabelName   = "humio.com/node-id"
+	NodePoolLabelName = "humio.com/node-pool"
 )
 
 // LabelsForHumio returns the set of common labels for Humio resources.
