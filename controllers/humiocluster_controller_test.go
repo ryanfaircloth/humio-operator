@@ -1089,7 +1089,7 @@ var _ = Describe("HumioCluster Controller", func() {
 		})
 	})
 
-	FContext("Humio Cluster Service Account Annotations", func() {
+	Context("Humio Cluster Service Account Annotations", func() {
 		It("Should correctly handle service account annotations", func() {
 			key := types.NamespacedName{
 				Name:      "humiocluster-sa-annotations",
@@ -2652,7 +2652,7 @@ var _ = Describe("HumioCluster Controller", func() {
 		})
 	})
 
-	FContext("Humio Cluster With Custom Service Accounts", func() {
+	Context("Humio Cluster With Custom Service Accounts", func() {
 		It("Creating cluster with custom service accounts", func() {
 			key := types.NamespacedName{
 				Name:      "humiocluster-custom-service-accounts",

@@ -1363,7 +1363,7 @@ func (r *HumioClusterReconciler) ensureServiceAccountSecretExists(ctx context.Co
 			r.Log.Error(err, "failed to validate new secret")
 			return err
 		}
-		r.Log.Info(fmt.Sprintf("successfully created service account secret %s", secret.Name))
+		r.Log.Info(fmt.Sprintf("successfully created service account secret %s for service account %s", secret.Name, serviceAccountName))
 		humioClusterPrometheusMetrics.Counters.ServiceAccountSecretsCreated.Inc()
 	}
 

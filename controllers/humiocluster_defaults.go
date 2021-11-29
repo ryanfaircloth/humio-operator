@@ -129,6 +129,7 @@ func NewHumioNodeManagerFromHumioCluster(hc *humiov1alpha1.HumioCluster) *HumioN
 			HumioServicePort:               hc.Spec.HumioServicePort,
 			HumioServiceType:               hc.Spec.HumioServiceType,
 			HumioServiceAnnotations:        hc.Spec.HumioServiceAnnotations,
+			InitServiceAccountName:         hc.Spec.InitServiceAccountName,
 		},
 		tls:                      hc.Spec.TLS,
 		idpCertificateSecretName: hc.Spec.IdpCertificateSecretName,
@@ -187,6 +188,7 @@ func NewHumioNodeManagerFromHumioNodePool(hc *humiov1alpha1.HumioCluster, hnp *h
 			HumioServicePort:               hnp.HumioServicePort,
 			HumioServiceType:               hnp.HumioServiceType,
 			HumioServiceAnnotations:        hnp.HumioServiceAnnotations,
+			InitServiceAccountName:         hnp.InitServiceAccountName,
 		},
 		tls:                      hc.Spec.TLS,
 		idpCertificateSecretName: hc.Spec.IdpCertificateSecretName,
@@ -469,17 +471,11 @@ func (hnp HumioNodePool) GetPodAnnotations() map[string]string {
 }
 
 func (hnp HumioNodePool) GetAuthServiceAccountSecretName() string {
-	if hnp.nodePoolName == "" {
-		return fmt.Sprintf("%s-%s", hnp.GetClusterName(), authServiceAccountSecretNameIdentifier)
-	}
-	return fmt.Sprintf("%s-%s-%s", hnp.GetClusterName(), hnp.GetNodePoolName(), authServiceAccountSecretNameIdentifier)
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), authServiceAccountSecretNameIdentifier)
 }
 
 func (hnp HumioNodePool) GetInitServiceAccountSecretName() string {
-	if hnp.nodePoolName == "" {
-		return fmt.Sprintf("%s-%s", hnp.GetClusterName(), initServiceAccountSecretNameIdentifier)
-	}
-	return fmt.Sprintf("%s-%s-%s", hnp.GetClusterName(), hnp.GetNodePoolName(), initServiceAccountSecretNameIdentifier)
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), initServiceAccountSecretNameIdentifier)
 }
 
 func (hnp HumioNodePool) GetInitServiceAccountName() string {
@@ -862,7 +858,7 @@ func setEnvironmentVariableDefaults(hc *humiov1alpha1.HumioCluster, hnp *HumioNo
 		{Name: "HUMIO_LOG4J_CONFIGURATION", Value: "log4j2-json-stdout.xml"},
 		{
 			Name:  "EXTERNAL_URL", // URL used by other Humio hosts.
-			Value: fmt.Sprintf("%s://$(POD_NAME).%s.$(POD_NAMESPACE):$(HUMIO_PORT)", strings.ToLower(scheme), headlessServiceName(hc.Name)),
+			Value: fmt.Sprintf("%s://$(POD_NAME).%s.$(POD_NAMESPACE):$(HUMIO_PORT)", scheme, headlessServiceName(hc.Name)),
 		},
 	}
 
