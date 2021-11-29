@@ -226,7 +226,7 @@ func (hnp *HumioNodePool) SetImage(image string) {
 }
 
 func (hnp HumioNodePool) GetImage() string {
-	if hnp.humioNodeSpec.Image != "" {
+	if hnp.humioNodeSpec.Image != "" && hnp.GetImageSource() == nil {
 		return hnp.humioNodeSpec.Image
 	}
 	return image
@@ -256,15 +256,24 @@ func (hnp HumioNodePool) GetEnvironmentVariablesSource() []corev1.EnvFromSource 
 }
 
 func (hnp HumioNodePool) GetTargetReplicationFactor() int {
-	return hnp.targetReplicationFactor
+	if hnp.targetReplicationFactor != 0 {
+		return hnp.targetReplicationFactor
+	}
+	return targetReplicationFactor
 }
 
 func (hnp HumioNodePool) GetStoragePartitionsCount() int {
-	return hnp.storagePartitionsCount
+	if hnp.storagePartitionsCount != 0 {
+		return hnp.storagePartitionsCount
+	}
+	return storagePartitionsCount
 }
 
 func (hnp HumioNodePool) GetDigestPartitionsCount() int {
-	return hnp.digestPartitionsCount
+	if hnp.digestPartitionsCount != 0 {
+		return hnp.digestPartitionsCount
+	}
+	return digestPartitionsCount
 }
 
 func (hnp HumioNodePool) GetHumioClusterNodePoolRevisionAnnotation() (string, int) {
@@ -779,22 +788,6 @@ func (hnp HumioNodePool) GetProbeScheme() corev1.URIScheme {
 	return corev1.URISchemeHTTPS
 }
 
-func setDefaults(hc *humiov1alpha1.HumioCluster) {
-	if hc.Spec.Image == "" && hc.Spec.ImageSource == nil {
-		hc.Spec.Image = image
-	}
-	if hc.Spec.TargetReplicationFactor == 0 {
-		hc.Spec.TargetReplicationFactor = targetReplicationFactor
-	}
-	if hc.Spec.StoragePartitionsCount == 0 {
-		hc.Spec.StoragePartitionsCount = storagePartitionsCount
-	}
-	if hc.Spec.DigestPartitionsCount == 0 {
-		hc.Spec.DigestPartitionsCount = digestPartitionsCount
-	}
-
-}
-
 func viewGroupPermissionsOrDefault(hc *humiov1alpha1.HumioCluster) string {
 	return hc.Spec.ViewGroupPermissions
 }
@@ -841,10 +834,10 @@ func setEnvironmentVariableDefaults(hc *humiov1alpha1.HumioCluster, hnp *HumioNo
 		{Name: "HUMIO_JVM_ARGS", Value: "-Xss2m -Xms256m -Xmx1536m -server -XX:+UseParallelGC -XX:+ScavengeBeforeFullGC -XX:+DisableExplicitGC"},
 		{Name: "HUMIO_PORT", Value: strconv.Itoa(humioPort)},
 		{Name: "ELASTIC_PORT", Value: strconv.Itoa(elasticPort)},
-		{Name: "DIGEST_REPLICATION_FACTOR", Value: strconv.Itoa(hc.Spec.TargetReplicationFactor)},
-		{Name: "STORAGE_REPLICATION_FACTOR", Value: strconv.Itoa(hc.Spec.TargetReplicationFactor)},
-		{Name: "DEFAULT_PARTITION_COUNT", Value: strconv.Itoa(hc.Spec.StoragePartitionsCount)},
-		{Name: "INGEST_QUEUE_INITIAL_PARTITIONS", Value: strconv.Itoa(hc.Spec.DigestPartitionsCount)},
+		{Name: "DIGEST_REPLICATION_FACTOR", Value: strconv.Itoa(hnp.GetTargetReplicationFactor())},
+		{Name: "STORAGE_REPLICATION_FACTOR", Value: strconv.Itoa(hnp.GetTargetReplicationFactor())},
+		{Name: "DEFAULT_PARTITION_COUNT", Value: strconv.Itoa(hnp.GetStoragePartitionsCount())},
+		{Name: "INGEST_QUEUE_INITIAL_PARTITIONS", Value: strconv.Itoa(hnp.GetDigestPartitionsCount())},
 		{Name: "KAFKA_MANAGED_BY_HUMIO", Value: "true"},
 		{Name: "AUTHENTICATION_METHOD", Value: "single-user"},
 		{Name: "HUMIO_LOG4J_CONFIGURATION", Value: "log4j2-json-stdout.xml"},

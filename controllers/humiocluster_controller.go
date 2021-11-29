@@ -100,9 +100,6 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Set defaults
-	setDefaults(hc) // TODO: Get rid of this
-
 	var humioNodePools []*HumioNodePool
 	humioNodePools = append(humioNodePools, NewHumioNodeManagerFromHumioCluster(hc))
 	for _, nodePool := range hc.Spec.NodePools {
@@ -200,7 +197,7 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		totalNodeCount += pool.GetNodeCount()
 	}
 
-	if totalNodeCount < hc.Spec.TargetReplicationFactor {
+	if totalNodeCount < NewHumioNodeManagerFromHumioCluster(hc).GetTargetReplicationFactor() {
 		r.Log.Error(err, "node count lower than target replication factor")
 		errState := r.setState(ctx, humiov1alpha1.HumioClusterStateConfigError, hc)
 		if errState != nil {
