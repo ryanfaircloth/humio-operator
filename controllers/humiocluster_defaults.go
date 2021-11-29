@@ -90,6 +90,7 @@ type HumioNodePool struct {
 	digestPartitionsCount    int
 	path                     string
 	ingress                  humiov1alpha1.HumioClusterIngressSpec
+	clusterAnnotations       map[string]string
 }
 
 func NewHumioNodeManagerFromHumioCluster(hc *humiov1alpha1.HumioCluster) *HumioNodePool {
@@ -145,6 +146,7 @@ func NewHumioNodeManagerFromHumioCluster(hc *humiov1alpha1.HumioCluster) *HumioN
 		digestPartitionsCount:    hc.Spec.DigestPartitionsCount,
 		path:                     hc.Spec.Path,
 		ingress:                  hc.Spec.Ingress,
+		clusterAnnotations:       hc.Annotations,
 	}
 }
 
@@ -202,6 +204,7 @@ func NewHumioNodeManagerFromHumioNodePool(hc *humiov1alpha1.HumioCluster, hnp *h
 		digestPartitionsCount:    hc.Spec.DigestPartitionsCount,
 		path:                     hc.Spec.Path,
 		ingress:                  hc.Spec.Ingress,
+		clusterAnnotations:       hc.Annotations,
 	}
 }
 
@@ -224,7 +227,7 @@ func (hnp HumioNodePool) GetHostname() string {
 	return hnp.hostname
 }
 
-func (hnp HumioNodePool) SetImage(image string) {
+func (hnp *HumioNodePool) SetImage(image string) {
 	hnp.humioNodeSpec.Image = image
 }
 
@@ -268,6 +271,23 @@ func (hnp HumioNodePool) GetStoragePartitionsCount() int {
 
 func (hnp HumioNodePool) GetDigestPartitionsCount() int {
 	return hnp.digestPartitionsCount
+}
+
+func (hnp HumioNodePool) GetHumioClusterNodePoolRevisionAnnotation() (string, int) {
+	annotations := map[string]string{}
+	if hnp.clusterAnnotations != nil {
+		annotations = hnp.clusterAnnotations
+	}
+	podAnnotationKey := strings.Join([]string{podRevisionAnnotation, hnp.GetNodePoolName()}, "-")
+	revision, ok := annotations[podAnnotationKey]
+	if !ok {
+		revision = "0"
+	}
+	existingRevision, err := strconv.Atoi(revision)
+	if err != nil {
+		return "", -1
+	}
+	return podAnnotationKey, existingRevision
 }
 
 func (hnp HumioNodePool) GetIngress() humiov1alpha1.HumioClusterIngressSpec {
@@ -396,7 +416,7 @@ func (hnp HumioNodePool) GetContainerSecurityContext() *corev1.SecurityContext {
 }
 
 func (hnp HumioNodePool) GetLabels() map[string]string {
-	labels := kubernetes.LabelsForHumio(hnp.clusterName)
+	labels := hnp.GetCommonClusterLabels()
 	labels[kubernetes.NodePoolLabelName] = hnp.GetNodePoolName()
 	return labels
 }
@@ -417,7 +437,7 @@ func (hnp HumioNodePool) UseExistingCA() bool {
 }
 
 func (hnp HumioNodePool) GetLabelsForSecret(secretName string) map[string]string {
-	labels := kubernetes.LabelsForHumio(hnp.clusterName)
+	labels := hnp.GetCommonClusterLabels()
 	labels[kubernetes.SecretNameLabelName] = secretName
 	return labels
 }
@@ -749,88 +769,6 @@ func setDefaults(hc *humiov1alpha1.HumioCluster) {
 
 }
 
-/*
-func helperImageOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	if hc.Spec.HelperImage == "" {
-		return helperImage
-	}
-	return hc.Spec.HelperImage
-}
-
-*/
-
-/*
-func nodeCountOrDefault(hc *humiov1alpha1.HumioCluster) int {
-	if hc.Spec.NodeCount == nil {
-		return nodeCount
-	}
-	return *hc.Spec.NodeCount
-}
-*/
-
-func imagePullPolicyOrDefault(hc *humiov1alpha1.HumioCluster) corev1.PullPolicy {
-	return hc.Spec.ImagePullPolicy
-}
-
-func imagePullSecretsOrDefault(hc *humiov1alpha1.HumioCluster) []corev1.LocalObjectReference {
-	return hc.Spec.ImagePullSecrets
-}
-
-/*
-func dataVolumePersistentVolumeClaimSpecTemplateOrDefault(hc *humiov1alpha1.HumioCluster, pvcName string) corev1.VolumeSource {
-	if pvcsEnabled(hc) {
-		return corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: pvcName,
-			},
-		}
-	}
-	return corev1.VolumeSource{}
-}
-*/
-
-/*
-func dataVolumeSourceOrDefault(hc *humiov1alpha1.HumioCluster) corev1.VolumeSource {
-	return hc.Spec.DataVolumeSource
-}
-*/
-
-func affinityOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.Affinity {
-	if hc.Spec.Affinity == (corev1.Affinity{}) {
-		return &corev1.Affinity{
-			NodeAffinity: &corev1.NodeAffinity{
-				RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-					NodeSelectorTerms: []corev1.NodeSelectorTerm{
-						{
-							MatchExpressions: []corev1.NodeSelectorRequirement{
-								{
-									Key:      corev1.LabelArchStable,
-									Operator: corev1.NodeSelectorOpIn,
-									Values: []string{
-										"amd64",
-									},
-								},
-								{
-									Key:      corev1.LabelOSStable,
-									Operator: corev1.NodeSelectorOpIn,
-									Values: []string{
-										"linux",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-	}
-	return &hc.Spec.Affinity
-}
-
-func tolerationsOrDefault(hc *humiov1alpha1.HumioCluster) []corev1.Toleration {
-	return hc.Spec.Tolerations
-}
-
 func humioServiceAccountAnnotationsOrDefault(hc *humiov1alpha1.HumioCluster) map[string]string {
 	return hc.Spec.HumioServiceAccountAnnotations
 }
@@ -873,13 +811,6 @@ func viewGroupPermissionsConfigMapName(hc *humiov1alpha1.HumioCluster) string {
 	return fmt.Sprintf("%s-%s", hc.Name, viewGroupPermissionsConfigMapNameSuffix)
 }
 
-func idpCertificateSecretNameOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	if hc.Spec.IdpCertificateSecretName != "" {
-		return hc.Spec.IdpCertificateSecretName
-	}
-	return fmt.Sprintf("%s-%s", hc.Name, idpCertificateSecretNameSuffix)
-}
-
 func initClusterRoleName(hc *humiov1alpha1.HumioCluster) string {
 	return fmt.Sprintf("%s-%s-%s", hc.Namespace, hc.Name, initClusterRoleSuffix)
 }
@@ -894,126 +825,6 @@ func authRoleName(hc *humiov1alpha1.HumioCluster) string {
 
 func authRoleBindingName(hc *humiov1alpha1.HumioCluster) string {
 	return fmt.Sprintf("%s-%s", hc.Name, authRoleBindingSuffix)
-}
-
-func containerReadinessProbeOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.Probe {
-	if hc.Spec.ContainerReadinessProbe != nil && (*hc.Spec.ContainerReadinessProbe == (corev1.Probe{})) {
-		return nil
-	}
-
-	if hc.Spec.ContainerReadinessProbe == nil {
-		return &corev1.Probe{
-			Handler: corev1.Handler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path:   "/api/v1/is-node-up",
-					Port:   intstr.IntOrString{IntVal: humioPort},
-					Scheme: getProbeScheme(hc),
-				},
-			},
-			InitialDelaySeconds: 30,
-			PeriodSeconds:       5,
-			TimeoutSeconds:      5,
-			SuccessThreshold:    1,
-			FailureThreshold:    10,
-		}
-	}
-	return hc.Spec.ContainerReadinessProbe
-}
-
-func containerLivenessProbeOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.Probe {
-	if hc.Spec.ContainerLivenessProbe != nil && (*hc.Spec.ContainerLivenessProbe == (corev1.Probe{})) {
-		return nil
-	}
-
-	if hc.Spec.ContainerLivenessProbe == nil {
-		return &corev1.Probe{
-			Handler: corev1.Handler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path:   "/api/v1/is-node-up",
-					Port:   intstr.IntOrString{IntVal: humioPort},
-					Scheme: getProbeScheme(hc),
-				},
-			},
-			InitialDelaySeconds: 30,
-			PeriodSeconds:       5,
-			TimeoutSeconds:      5,
-			SuccessThreshold:    1,
-			FailureThreshold:    10,
-		}
-	}
-	return hc.Spec.ContainerLivenessProbe
-}
-
-func containerStartupProbeOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.Probe {
-	if hc.Spec.ContainerStartupProbe != nil && (*hc.Spec.ContainerStartupProbe == (corev1.Probe{})) {
-		return nil
-	}
-
-	if hc.Spec.ContainerStartupProbe == nil {
-		return &corev1.Probe{
-			Handler: corev1.Handler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path:   "/api/v1/is-node-up",
-					Port:   intstr.IntOrString{IntVal: humioPort},
-					Scheme: getProbeScheme(hc),
-				},
-			},
-			PeriodSeconds:    10,
-			TimeoutSeconds:   5,
-			SuccessThreshold: 1,
-			FailureThreshold: 30,
-		}
-	}
-	return hc.Spec.ContainerStartupProbe
-}
-
-func podResourcesOrDefault(hc *humiov1alpha1.HumioCluster) corev1.ResourceRequirements {
-	emptyResources := corev1.ResourceRequirements{}
-	if reflect.DeepEqual(hc.Spec.Resources, emptyResources) {
-		return emptyResources
-	}
-	return hc.Spec.Resources
-}
-
-func containerSecurityContextOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.SecurityContext {
-	if hc.Spec.ContainerSecurityContext == nil {
-		return &corev1.SecurityContext{
-			AllowPrivilegeEscalation: helpers.BoolPtr(false),
-			Privileged:               helpers.BoolPtr(false),
-			ReadOnlyRootFilesystem:   helpers.BoolPtr(true),
-			RunAsUser:                helpers.Int64Ptr(65534),
-			RunAsNonRoot:             helpers.BoolPtr(true),
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{
-					"NET_BIND_SERVICE",
-					"SYS_NICE",
-				},
-				Drop: []corev1.Capability{
-					"ALL",
-				},
-			},
-		}
-	}
-	return hc.Spec.ContainerSecurityContext
-}
-
-func podSecurityContextOrDefault(hc *humiov1alpha1.HumioCluster) *corev1.PodSecurityContext {
-	if hc.Spec.PodSecurityContext == nil {
-		return &corev1.PodSecurityContext{
-			RunAsUser:    helpers.Int64Ptr(65534),
-			RunAsNonRoot: helpers.BoolPtr(true),
-			RunAsGroup:   helpers.Int64Ptr(0), // TODO: We probably want to move away from this.
-			FSGroup:      helpers.Int64Ptr(0), // TODO: We probably want to move away from this.
-		}
-	}
-	return hc.Spec.PodSecurityContext
-}
-
-func terminationGracePeriodSecondsOrDefault(hc *humiov1alpha1.HumioCluster) *int64 {
-	if hc.Spec.TerminationGracePeriodSeconds == nil {
-		return helpers.Int64Ptr(300)
-	}
-	return hc.Spec.TerminationGracePeriodSeconds
 }
 
 func setEnvironmentVariableDefaults(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) {
@@ -1144,63 +955,6 @@ func ingressTLSOrDefault(hc *humiov1alpha1.HumioCluster) bool {
 		return true
 	}
 	return *hc.Spec.Ingress.TLS
-}
-
-func extraHumioVolumeMountsOrDefault(hc *humiov1alpha1.HumioCluster) []corev1.VolumeMount {
-	if len(hc.Spec.ExtraHumioVolumeMounts) > 0 {
-		return hc.Spec.ExtraHumioVolumeMounts
-	}
-	return []corev1.VolumeMount{}
-}
-
-func extraVolumesOrDefault(hc *humiov1alpha1.HumioCluster) []corev1.Volume {
-	if len(hc.Spec.ExtraVolumes) > 0 {
-		return hc.Spec.ExtraVolumes
-	}
-	return []corev1.Volume{}
-}
-
-func nodeUUIDPrefixOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	if hc.Spec.NodeUUIDPrefix != "" {
-		return hc.Spec.NodeUUIDPrefix
-	}
-	return nodeUUIDPrefix
-}
-
-func sidecarContainersOrDefault(hc *humiov1alpha1.HumioCluster) []corev1.Container {
-	if len(hc.Spec.SidecarContainers) > 0 {
-		return hc.Spec.SidecarContainers
-	}
-	return []corev1.Container{}
-}
-
-func humioServiceTypeOrDefault(hc *humiov1alpha1.HumioCluster) corev1.ServiceType {
-	if hc.Spec.HumioServiceType != "" {
-		return hc.Spec.HumioServiceType
-	}
-	return corev1.ServiceTypeClusterIP
-}
-
-func humioServicePortOrDefault(hc *humiov1alpha1.HumioCluster) int32 {
-	if hc.Spec.HumioServicePort != 0 {
-		return hc.Spec.HumioServicePort
-	}
-	return humioPort
-
-}
-
-func humioESServicePortOrDefault(hc *humiov1alpha1.HumioCluster) int32 {
-	if hc.Spec.HumioESServicePort != 0 {
-		return hc.Spec.HumioESServicePort
-	}
-	return elasticPort
-}
-
-func humioServiceAnnotationsOrDefault(hc *humiov1alpha1.HumioCluster) map[string]string {
-	if hc.Spec.HumioServiceAnnotations != nil {
-		return hc.Spec.HumioServiceAnnotations
-	}
-	return map[string]string(nil)
 }
 
 func humioHeadlessServiceAnnotationsOrDefault(hc *humiov1alpha1.HumioCluster) map[string]string {

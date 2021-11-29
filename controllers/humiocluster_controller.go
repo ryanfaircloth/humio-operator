@@ -91,6 +91,15 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return reconcile.Result{}, err
 	}
 
+	if err := r.ensureLicenseIsValid(ctx, hc); err != nil {
+		r.Log.Error(err, "no valid license provided")
+		errState := r.setState(ctx, humiov1alpha1.HumioClusterStateConfigError, hc)
+		if errState != nil {
+			r.Log.Error(errState, "unable to set cluster state")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Set defaults
 	setDefaults(hc)
 
@@ -107,7 +116,7 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}(ctx, r.HumioClient, hc)
 
 	for _, pool := range humioNodePools {
-		if err := r.setImageFromSource(context.TODO(), pool); err != nil {
+		if err := r.setImageFromSource(ctx, pool); err != nil {
 			r.Log.Error(err, "could not get imageSource")
 			errState := r.setState(ctx, humiov1alpha1.HumioClusterStateConfigError, hc)
 			if errState != nil {
@@ -200,15 +209,6 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ensureLicenseIsValid(ctx, hc); err != nil {
-		r.Log.Error(err, "no valid license provided")
-		errState := r.setState(ctx, humiov1alpha1.HumioClusterStateConfigError, hc)
-		if errState != nil {
-			r.Log.Error(errState, "unable to set cluster state")
-		}
-		return ctrl.Result{}, err
-	}
-
 	if hc.Status.State == "" {
 		err := r.setState(ctx, humiov1alpha1.HumioClusterStateRunning, hc)
 		if err != nil {
@@ -217,18 +217,24 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	currentRevision, err := r.getHumioClusterPodRevision(hc)
-	if err == nil && currentRevision == 0 {
-		currentRevision = 1
-		r.Log.Info(fmt.Sprintf("setting cluster pod revision to %d", currentRevision))
-		hc.Annotations[podRevisionAnnotation] = strconv.Itoa(currentRevision)
+	for _, pool := range humioNodePools {
+		revisionKey, revisionValue := pool.GetHumioClusterNodePoolRevisionAnnotation()
+		if revisionValue == 0 {
+			revisionValue = 1
+			r.Log.Info(fmt.Sprintf("setting cluster pod revision %s=%d", revisionKey, revisionValue))
+			if hc.Annotations == nil {
+				hc.Annotations = map[string]string{}
+			}
+			hc.Annotations[revisionKey] = strconv.Itoa(revisionValue)
 
-		r.setRestartPolicy(hc, PodRestartPolicyRolling)
+			r.setRestartPolicy(hc, PodRestartPolicyRolling)
 
-		err = r.Update(ctx, hc)
-		if err != nil {
-			r.Log.Error(err, fmt.Sprintf("unable to set annotation %s", podHashAnnotation))
-			return reconcile.Result{}, fmt.Errorf("unable to set annotation %s on HumioCluster: %s", podRevisionAnnotation, err)
+			err = r.Update(ctx, hc)
+			if err != nil {
+				r.Log.Error(err, fmt.Sprintf("unable to set annotation %s", revisionKey))
+				return reconcile.Result{}, fmt.Errorf("unable to set annotation %s on HumioCluster: %s", revisionKey, err)
+			}
+			return reconcile.Result{Requeue: true}, nil
 		}
 	}
 
@@ -393,10 +399,10 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if podsStatus.waitingOnPods() {
 			r.Log.Info("waiting on pods, refusing to continue with reconciliation until all pods are ready")
 			r.Log.Info(fmt.Sprintf("cluster state is %s. waitingOnPods=%v, "+
-				"revisionsInSync=%v, podRevisisons=%v, podDeletionTimestampSet=%v, podNames=%v, expectedRunningPods=%v, "+
+				"revisionsInSync=%v, podRevisisons=%v, podDeletionTimestampSet=%v, podNames=%v, podImageVersions=%v, expectedRunningPods=%v, "+
 				"podsReady=%v, podsNotReady=%v",
 				hc.Status.State, podsStatus.waitingOnPods(), podsStatus.podRevisionsInSync(),
-				podsStatus.podRevisions, podsStatus.podDeletionTimestampSet, podsStatus.podNames,
+				podsStatus.podRevisions, podsStatus.podDeletionTimestampSet, podsStatus.podNames, podsStatus.podImageVersions,
 				podsStatus.expectedRunningPods, podsStatus.readyCount, podsStatus.notReadyCount))
 			return reconcile.Result{RequeueAfter: time.Second * 5}, nil
 		}
@@ -1885,7 +1891,7 @@ func (r *HumioClusterReconciler) ensureHumioServiceAccountAnnotations(ctx contex
 		}
 
 		// Trigger restart of humio to pick up the updated service account
-		if _, err = r.incrementHumioClusterPodRevision(ctx, hc, PodRestartPolicyRolling); err != nil {
+		if _, err = r.incrementHumioClusterPodRevision(ctx, hc, hnp, PodRestartPolicyRolling); err != nil {
 			return reconcile.Result{}, err
 		}
 
@@ -1964,7 +1970,7 @@ func (r *HumioClusterReconciler) ensureMismatchedPodsAreDeleted(ctx context.Cont
 					r.Log.Error(err, fmt.Sprintf("failed to set state to %s", humiov1alpha1.HumioClusterStateUpgrading))
 					return reconcile.Result{}, err
 				}
-				if revision, err := r.incrementHumioClusterPodRevision(ctx, hc, PodRestartPolicyRecreate); err != nil {
+				if revision, err := r.incrementHumioClusterPodRevision(ctx, hc, hnp, PodRestartPolicyRecreate); err != nil {
 					r.Log.Error(err, fmt.Sprintf("failed to increment pod revision to %d", revision))
 					return reconcile.Result{}, err
 				}
@@ -1974,7 +1980,7 @@ func (r *HumioClusterReconciler) ensureMismatchedPodsAreDeleted(ctx context.Cont
 					r.Log.Error(err, fmt.Sprintf("failed to set state to %s", humiov1alpha1.HumioClusterStateRestarting))
 					return reconcile.Result{}, err
 				}
-				if revision, err := r.incrementHumioClusterPodRevision(ctx, hc, PodRestartPolicyRolling); err != nil {
+				if revision, err := r.incrementHumioClusterPodRevision(ctx, hc, hnp, PodRestartPolicyRolling); err != nil {
 					r.Log.Error(err, fmt.Sprintf("failed to increment pod revision to %d", revision))
 					return reconcile.Result{}, err
 				}
@@ -2015,9 +2021,9 @@ func (r *HumioClusterReconciler) ensureMismatchedPodsAreDeleted(ctx context.Cont
 	}
 
 	r.Log.Info(fmt.Sprintf("cluster state is still %s. waitingOnPods=%v, podBeingDeleted=%v, "+
-		"revisionsInSync=%v, podRevisisons=%v, podDeletionTimestampSet=%v, podNames=%v, expectedRunningPods=%v, podsReady=%v, podsNotReady=%v",
+		"revisionsInSync=%v, podRevisisons=%v, podDeletionTimestampSet=%v, podNames=%v, podHumioVersions=%v, expectedRunningPods=%v, podsReady=%v, podsNotReady=%v",
 		hc.Status.State, podsStatus.waitingOnPods(), desiredLifecycleState.delete, podsStatus.podRevisionsInSync(),
-		podsStatus.podRevisions, podsStatus.podDeletionTimestampSet, podsStatus.podNames, podsStatus.expectedRunningPods, podsStatus.readyCount, podsStatus.notReadyCount))
+		podsStatus.podRevisions, podsStatus.podDeletionTimestampSet, podsStatus.podNames, podsStatus.podImageVersions, podsStatus.expectedRunningPods, podsStatus.readyCount, podsStatus.notReadyCount))
 
 	// If we have pods being deleted, requeue as long as we're not doing a rolling update. This will ensure all pods
 	// are removed before creating the replacement pods.
@@ -2168,13 +2174,6 @@ func (r *HumioClusterReconciler) ensureValidStorageConfiguration(hc *humiov1alph
 	}
 
 	return nil
-}
-
-// TODO: there is no need for this. We should instead change this to a get method where we return the list of env vars
-// including the defaults
-func envVarList(hc *humiov1alpha1.HumioCluster) []corev1.EnvVar {
-	setEnvironmentVariableDefaults(hc, &HumioNodePool{})
-	return hc.Spec.EnvironmentVariables
 }
 
 func (r *HumioClusterReconciler) pvcList(ctx context.Context, hnp *HumioNodePool) ([]corev1.PersistentVolumeClaim, error) {

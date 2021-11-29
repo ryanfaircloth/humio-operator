@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"github.com/humio/humio-operator/pkg/kubernetes"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,7 @@ type podsStatusState struct {
 	readyCount              int
 	notReadyCount           int
 	podRevisions            []int
+	podImageVersions        []string
 	podDeletionTimestampSet []bool
 	podNames                []string
 	podErrors               []corev1.Pod
@@ -40,26 +42,26 @@ func (r *HumioClusterReconciler) getPodsStatus(hnp *HumioNodePool, foundPodList 
 		}
 		status.podDeletionTimestampSet = append(status.podDeletionTimestampSet, pod.DeletionTimestamp != nil)
 		status.podNames = append(status.podNames, pod.Name)
+		humioIdx, _ := kubernetes.GetContainerIndexByName(pod, "humio")
+		status.podImageVersions = append(status.podImageVersions, pod.Spec.Containers[humioIdx].Image)
 
 		// pods that were just deleted may still have a status of Ready, but we should not consider them ready
 		if pod.DeletionTimestamp == nil {
 			for _, condition := range pod.Status.Conditions {
-				if condition.Type == corev1.PodReady {
-					if condition.Status == corev1.ConditionTrue {
-						podsReady = append(podsReady, pod.Name)
-						status.readyCount++
-						status.notReadyCount--
-					} else {
-						podsNotReady = append(podsNotReady, pod.Name)
-						for _, containerStatus := range pod.Status.ContainerStatuses {
-							if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason != containerStateCreating && containerStatus.State.Waiting.Reason != podInitializing {
-								r.Log.Info(fmt.Sprintf("pod %s has errors, container state: Waiting, reason: %s", pod.Name, containerStatus.State.Waiting.Reason))
-								status.podErrors = append(status.podErrors, pod)
-							}
-							if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.Reason != containerStateCompleted {
-								r.Log.Info(fmt.Sprintf("pod %s has errors, container state: Terminated, reason: %s", pod.Name, containerStatus.State.Terminated.Reason))
-								status.podErrors = append(status.podErrors, pod)
-							}
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					podsReady = append(podsReady, pod.Name)
+					status.readyCount++
+					status.notReadyCount--
+				} else {
+					podsNotReady = append(podsNotReady, pod.Name)
+					for _, containerStatus := range pod.Status.ContainerStatuses {
+						if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason != containerStateCreating && containerStatus.State.Waiting.Reason != podInitializing {
+							r.Log.Info(fmt.Sprintf("pod %s has errors, container state: Waiting, reason: %s", pod.Name, containerStatus.State.Waiting.Reason))
+							status.podErrors = append(status.podErrors, pod)
+						}
+						if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.Reason != containerStateCompleted {
+							r.Log.Info(fmt.Sprintf("pod %s has errors, container state: Terminated, reason: %s", pod.Name, containerStatus.State.Terminated.Reason))
+							status.podErrors = append(status.podErrors, pod)
 						}
 					}
 				}

@@ -833,15 +833,9 @@ func (r *HumioClusterReconciler) createPod(ctx context.Context, hc *humiov1alpha
 		pod.Annotations[envVarSourceHashAnnotation] = helpers.AsSHA256(string(b))
 	}
 
-	podRevision, err := r.getHumioClusterPodRevision(hc)
-	if err != nil {
-		return &corev1.Pod{}, err
-	}
+	_, podRevision := hnp.GetHumioClusterNodePoolRevisionAnnotation()
 	r.Log.Info(fmt.Sprintf("setting pod %s revision to %d", pod.Name, podRevision))
-	err = r.setPodRevision(pod, podRevision)
-	if err != nil {
-		return &corev1.Pod{}, err
-	}
+	r.setPodRevision(pod, podRevision)
 
 	r.Log.Info(fmt.Sprintf("creating pod %s", pod.Name))
 	err = r.Create(ctx, pod)
@@ -899,14 +893,8 @@ func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, hnp *
 	var envVarSourceMatches bool
 
 	desiredPodHash := podSpecAsSHA256(hnp, desiredPod)
-	existingPodRevision, err := r.getHumioClusterPodRevision(hc)
-	if err != nil {
-		return false, err
-	}
-	err = r.setPodRevision(&desiredPod, existingPodRevision)
-	if err != nil {
-		return false, err
-	}
+	_, existingPodRevision := hnp.GetHumioClusterNodePoolRevisionAnnotation()
+	r.setPodRevision(&desiredPod, existingPodRevision)
 	if pod.Annotations[podHashAnnotation] == desiredPodHash {
 		specMatches = true
 	}
