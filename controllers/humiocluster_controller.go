@@ -101,7 +101,7 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Set defaults
-	setDefaults(hc)
+	setDefaults(hc) // TODO: Get rid of this
 
 	var humioNodePools []*HumioNodePool
 	humioNodePools = append(humioNodePools, NewHumioNodeManagerFromHumioCluster(hc))
@@ -259,14 +259,18 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	err = r.ensureInitContainerPermissions(ctx, hc)
-	if err != nil {
-		return reconcile.Result{}, err
+	for _, pool := range humioNodePools {
+		err = r.ensureInitContainerPermissions(ctx, hc, pool)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
-	err = r.ensureAuthContainerPermissions(ctx, hc)
-	if err != nil {
-		return reconcile.Result{}, err
+	for _, pool := range humioNodePools {
+		err = r.ensureAuthContainerPermissions(ctx, hc, pool)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	// Ensure the users in the SCC are cleaned up.
@@ -308,7 +312,7 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	err = r.ensureExtraKafkaConfigsConfigMap(ctx, hc)
+	err = r.ensureExtraKafkaConfigsConfigMap(ctx, hc) // TODO: This should be per node pool
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -764,12 +768,12 @@ func (r *HumioClusterReconciler) ensureNginxIngress(ctx context.Context, hc *hum
 func (r *HumioClusterReconciler) ensureHumioPodPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
 	// Do not manage these resources if the HumioServiceAccountName is supplied. This implies the service account is managed
 	// outside of the operator
-	if hc.Spec.HumioServiceAccountName != "" {
+	if !hnp.HumioServiceAccountIsSetByUser() {
 		return nil
 	}
 
 	r.Log.Info("ensuring pod permissions")
-	err := r.ensureServiceAccountExists(ctx, hc, hnp.GetHumioServiceAccountName(), humioServiceAccountAnnotationsOrDefault(hc))
+	err := r.ensureServiceAccountExists(ctx, hc, hnp, hnp.GetHumioServiceAccountName(), hnp.GetHumioServiceAccountAnnotations())
 	if err != nil {
 		r.Log.Error(err, "unable to ensure humio service account exists")
 		return err
@@ -777,7 +781,7 @@ func (r *HumioClusterReconciler) ensureHumioPodPermissions(ctx context.Context, 
 
 	// In cases with OpenShift, we must ensure our ServiceAccount has access to the SecurityContextConstraint
 	if helpers.IsOpenShift() {
-		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hc, hnp.GetHumioServiceAccountName())
+		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hnp.GetNamespace(), hnp.GetHumioServiceAccountName())
 		if err != nil {
 			r.Log.Error(err, "could not ensure SecurityContextConstraints contains ServiceAccount")
 			return err
@@ -787,18 +791,18 @@ func (r *HumioClusterReconciler) ensureHumioPodPermissions(ctx context.Context, 
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	if hc.Spec.DisableInitContainer {
+func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
+	if hnp.InitContainerDisabled() {
 		return nil
 	}
 
 	// Only add the service account secret if the initServiceAccountName is supplied. This implies the service account,
 	// cluster role and cluster role binding are managed outside of the operator, so we skip the remaining tasks.
-	if hc.Spec.InitServiceAccountName != "" {
+	if hnp.InitServiceAccountIsSetByUser() {
 		// We do not want to attach the init service account to the humio pod. Instead, only the init container should use this
 		// service account. To do this, we can attach the service account directly to the init container as per
 		// https://github.com/kubernetes/kubernetes/issues/66020#issuecomment-590413238
-		err := r.ensureServiceAccountSecretExists(ctx, hc, initServiceAccountSecretName(hc), initServiceAccountNameOrDefault(hc))
+		err := r.ensureServiceAccountSecretExists(ctx, hc, hnp, hnp.GetInitServiceAccountSecretName(), hnp.GetInitServiceAccountName())
 		if err != nil {
 			r.Log.Error(err, "unable to ensure init service account secret exists for HumioCluster")
 			return err
@@ -810,7 +814,7 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 	// from the node on which the pod is scheduled. We cannot pre determine the zone from the controller because we cannot
 	// assume that the nodes are running. Additionally, if we pre allocate the zones to the humio pods, we would be required
 	// to have an autoscaling group per zone.
-	err := r.ensureServiceAccountExists(ctx, hc, initServiceAccountNameOrDefault(hc), map[string]string{})
+	err := r.ensureServiceAccountExists(ctx, hc, hnp, hnp.GetInitServiceAccountName(), map[string]string{})
 	if err != nil {
 		r.Log.Error(err, "unable to ensure init service account exists")
 		return err
@@ -819,7 +823,7 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 	// We do not want to attach the init service account to the humio pod. Instead, only the init container should use this
 	// service account. To do this, we can attach the service account directly to the init container as per
 	// https://github.com/kubernetes/kubernetes/issues/66020#issuecomment-590413238
-	err = r.ensureServiceAccountSecretExists(ctx, hc, initServiceAccountSecretName(hc), initServiceAccountNameOrDefault(hc))
+	err = r.ensureServiceAccountSecretExists(ctx, hc, hnp, hnp.GetInitServiceAccountSecretName(), hnp.GetInitServiceAccountName())
 	if err != nil {
 		r.Log.Error(err, "unable to ensure init service account secret exists for HumioCluster")
 		return err
@@ -827,7 +831,7 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 
 	// This should be namespaced by the name, e.g. clustername-namespace-name
 	// Required until https://github.com/kubernetes/kubernetes/issues/40610 is fixed
-	err = r.ensureInitClusterRole(ctx, hc)
+	err = r.ensureInitClusterRole(ctx, hnp)
 	if err != nil {
 		r.Log.Error(err, "unable to ensure init cluster role exists")
 		return err
@@ -835,7 +839,7 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 
 	// This should be namespaced by the name, e.g. clustername-namespace-name
 	// Required until https://github.com/kubernetes/kubernetes/issues/40610 is fixed
-	err = r.ensureInitClusterRoleBinding(ctx, hc)
+	err = r.ensureInitClusterRoleBinding(ctx, hnp)
 	if err != nil {
 		r.Log.Error(err, "unable to ensure init cluster role binding exists")
 		return err
@@ -843,7 +847,7 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 
 	// In cases with OpenShift, we must ensure our ServiceAccount has access to the SecurityContextConstraint
 	if helpers.IsOpenShift() {
-		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hc, initServiceAccountNameOrDefault(hc))
+		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hnp.GetNamespace(), hnp.GetInitServiceAccountName())
 		if err != nil {
 			r.Log.Error(err, "could not ensure SecurityContextConstraints contains ServiceAccount")
 			return err
@@ -853,14 +857,14 @@ func (r *HumioClusterReconciler) ensureInitContainerPermissions(ctx context.Cont
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
+func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
 	// Only add the service account secret if the authServiceAccountName is supplied. This implies the service account,
 	// cluster role and cluster role binding are managed outside of the operator, so we skip the remaining tasks.
-	if hc.Spec.AuthServiceAccountName != "" {
+	if hnp.AuthServiceAccountIsSetByUser() {
 		// We do not want to attach the auth service account to the humio pod. Instead, only the auth container should use this
 		// service account. To do this, we can attach the service account directly to the auth container as per
 		// https://github.com/kubernetes/kubernetes/issues/66020#issuecomment-590413238
-		err := r.ensureServiceAccountSecretExists(ctx, hc, authServiceAccountSecretName(hc), authServiceAccountNameOrDefault(hc))
+		err := r.ensureServiceAccountSecretExists(ctx, hc, hnp, hnp.GetAuthServiceAccountSecretName(), hnp.GetAuthServiceAccountName())
 		if err != nil {
 			r.Log.Error(err, "unable to ensure auth service account secret exists")
 			return err
@@ -869,7 +873,7 @@ func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Cont
 	}
 
 	// The service account is used by the auth container attached to the humio pods.
-	err := r.ensureServiceAccountExists(ctx, hc, authServiceAccountNameOrDefault(hc), map[string]string{})
+	err := r.ensureServiceAccountExists(ctx, hc, hnp, hnp.GetAuthServiceAccountName(), map[string]string{})
 	if err != nil {
 		r.Log.Error(err, "unable to ensure auth service account exists")
 		return err
@@ -878,19 +882,19 @@ func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Cont
 	// We do not want to attach the auth service account to the humio pod. Instead, only the auth container should use this
 	// service account. To do this, we can attach the service account directly to the auth container as per
 	// https://github.com/kubernetes/kubernetes/issues/66020#issuecomment-590413238
-	err = r.ensureServiceAccountSecretExists(ctx, hc, authServiceAccountSecretName(hc), authServiceAccountNameOrDefault(hc))
+	err = r.ensureServiceAccountSecretExists(ctx, hc, hnp, hnp.GetAuthServiceAccountSecretName(), hnp.GetAuthServiceAccountName())
 	if err != nil {
 		r.Log.Error(err, "unable to ensure auth service account secret exists")
 		return err
 	}
 
-	err = r.ensureAuthRole(ctx, hc)
+	err = r.ensureAuthRole(ctx, hc, hnp)
 	if err != nil {
 		r.Log.Error(err, "unable to ensure auth role exists")
 		return err
 	}
 
-	err = r.ensureAuthRoleBinding(ctx, hc)
+	err = r.ensureAuthRoleBinding(ctx, hc, hnp)
 	if err != nil {
 		r.Log.Error(err, "unable to ensure auth role binding exists")
 		return err
@@ -898,7 +902,7 @@ func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Cont
 
 	// In cases with OpenShift, we must ensure our ServiceAccount has access to the SecurityContextConstraint
 	if helpers.IsOpenShift() {
-		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hc, authServiceAccountNameOrDefault(hc))
+		err = r.ensureSecurityContextConstraintsContainsServiceAccount(ctx, hnp.GetNamespace(), hnp.GetAuthServiceAccountName())
 		if err != nil {
 			r.Log.Error(err, "could not ensure SecurityContextConstraints contains ServiceAccount")
 			return err
@@ -908,7 +912,7 @@ func (r *HumioClusterReconciler) ensureAuthContainerPermissions(ctx context.Cont
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureSecurityContextConstraintsContainsServiceAccount(ctx context.Context, hc *humiov1alpha1.HumioCluster, serviceAccountName string) error {
+func (r *HumioClusterReconciler) ensureSecurityContextConstraintsContainsServiceAccount(ctx context.Context, namespace, serviceAccountName string) error {
 	// TODO: Write unit/e2e test for this
 
 	if !helpers.IsOpenShift() {
@@ -923,7 +927,7 @@ func (r *HumioClusterReconciler) ensureSecurityContextConstraintsContainsService
 	}
 
 	// Give ServiceAccount access to SecurityContextConstraints if not already present
-	usersEntry := fmt.Sprintf("system:serviceaccount:%s:%s", hc.Namespace, serviceAccountName)
+	usersEntry := fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName)
 	if !helpers.ContainsElement(scc.Users, usersEntry) {
 		scc.Users = append(scc.Users, usersEntry)
 		err = r.Update(ctx, scc)
@@ -1166,12 +1170,12 @@ func (r *HumioClusterReconciler) ensureHumioNodeCertificates(ctx context.Context
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureInitClusterRole(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	clusterRoleName := initClusterRoleName(hc)
+func (r *HumioClusterReconciler) ensureInitClusterRole(ctx context.Context, hnp *HumioNodePool) error {
+	clusterRoleName := hnp.GetInitClusterRoleName()
 	_, err := kubernetes.GetClusterRole(ctx, r, clusterRoleName)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			clusterRole := kubernetes.ConstructInitClusterRole(clusterRoleName, hc.Name)
+			clusterRole := kubernetes.ConstructInitClusterRole(clusterRoleName, hnp.GetNodePoolName())
 			// TODO: We cannot use controllerutil.SetControllerReference() as ClusterRole is cluster-wide and owner is namespaced.
 			// We probably need another way to ensure we clean them up. Perhaps we can use finalizers?
 			r.Log.Info(fmt.Sprintf("creating cluster role: %s", clusterRole.Name))
@@ -1187,12 +1191,12 @@ func (r *HumioClusterReconciler) ensureInitClusterRole(ctx context.Context, hc *
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureAuthRole(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	roleName := authRoleName(hc)
-	_, err := kubernetes.GetRole(ctx, r, roleName, hc.Namespace)
+func (r *HumioClusterReconciler) ensureAuthRole(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
+	roleName := hnp.GetAuthRoleName()
+	_, err := kubernetes.GetRole(ctx, r, roleName, hnp.GetNamespace())
 	if err != nil {
 		if errors.IsNotFound(err) {
-			role := kubernetes.ConstructAuthRole(roleName, hc.Name, hc.Namespace)
+			role := kubernetes.ConstructAuthRole(roleName, hnp.GetNamespace(), hnp.GetLabels())
 			if err := controllerutil.SetControllerReference(hc, role, r.Scheme()); err != nil {
 				r.Log.Error(err, "could not set controller reference")
 				return err
@@ -1210,17 +1214,17 @@ func (r *HumioClusterReconciler) ensureAuthRole(ctx context.Context, hc *humiov1
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureInitClusterRoleBinding(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	clusterRoleBindingName := initClusterRoleBindingName(hc)
+func (r *HumioClusterReconciler) ensureInitClusterRoleBinding(ctx context.Context, hnp *HumioNodePool) error {
+	clusterRoleBindingName := hnp.GetInitClusterRoleBindingName()
 	_, err := kubernetes.GetClusterRoleBinding(ctx, r, clusterRoleBindingName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			clusterRole := kubernetes.ConstructClusterRoleBinding(
 				clusterRoleBindingName,
-				initClusterRoleName(hc),
-				hc.Name,
-				hc.Namespace,
-				initServiceAccountNameOrDefault(hc),
+				hnp.GetInitClusterRoleName(),
+				hnp.GetNamespace(),
+				hnp.GetInitServiceAccountName(),
+				hnp.GetLabels(),
 			)
 			// TODO: We cannot use controllerutil.SetControllerReference() as ClusterRoleBinding is cluster-wide and owner is namespaced.
 			// We probably need another way to ensure we clean them up. Perhaps we can use finalizers?
@@ -1237,17 +1241,17 @@ func (r *HumioClusterReconciler) ensureInitClusterRoleBinding(ctx context.Contex
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureAuthRoleBinding(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	roleBindingName := authRoleBindingName(hc)
-	_, err := kubernetes.GetRoleBinding(ctx, r, roleBindingName, hc.Namespace)
+func (r *HumioClusterReconciler) ensureAuthRoleBinding(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
+	roleBindingName := hnp.GetAuthRoleBindingName()
+	_, err := kubernetes.GetRoleBinding(ctx, r, roleBindingName, hnp.GetNamespace())
 	if err != nil {
 		if errors.IsNotFound(err) {
 			roleBinding := kubernetes.ConstructRoleBinding(
 				roleBindingName,
-				authRoleName(hc),
-				hc.Name,
-				hc.Namespace,
-				authServiceAccountNameOrDefault(hc),
+				hnp.GetAuthRoleName(),
+				hnp.GetNamespace(),
+				hnp.GetAuthServiceAccountName(),
+				hnp.GetLabels(),
 			)
 			if err := controllerutil.SetControllerReference(hc, roleBinding, r.Scheme()); err != nil {
 				r.Log.Error(err, "could not set controller reference")
@@ -1300,14 +1304,14 @@ func (r *HumioClusterReconciler) validateUserDefinedServiceAccountsExists(ctx co
 	return true, nil
 }
 
-func (r *HumioClusterReconciler) ensureServiceAccountExists(ctx context.Context, hc *humiov1alpha1.HumioCluster, serviceAccountName string, serviceAccountAnnotations map[string]string) error {
-	serviceAccountExists, err := r.serviceAccountExists(ctx, hc, serviceAccountName)
+func (r *HumioClusterReconciler) ensureServiceAccountExists(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, serviceAccountName string, serviceAccountAnnotations map[string]string) error {
+	serviceAccountExists, err := r.serviceAccountExists(ctx, hnp.GetNamespace(), serviceAccountName)
 	if err != nil {
-		r.Log.Error(err, fmt.Sprintf("could not check existence of service account \"%s\"", serviceAccountName))
+		r.Log.Error(err, fmt.Sprintf("could not check existence of service account %q", serviceAccountName))
 		return err
 	}
 	if !serviceAccountExists {
-		serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hc.Name, hc.Namespace, serviceAccountAnnotations)
+		serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetLabels())
 		if err := controllerutil.SetControllerReference(hc, serviceAccount, r.Scheme()); err != nil {
 			r.Log.Error(err, "could not set controller reference")
 			return err
@@ -1324,25 +1328,25 @@ func (r *HumioClusterReconciler) ensureServiceAccountExists(ctx context.Context,
 	return nil
 }
 
-func (r *HumioClusterReconciler) ensureServiceAccountSecretExists(ctx context.Context, hc *humiov1alpha1.HumioCluster, serviceAccountSecretName, serviceAccountName string) error {
-	serviceAccountExists, err := r.serviceAccountExists(ctx, hc, serviceAccountName)
+func (r *HumioClusterReconciler) ensureServiceAccountSecretExists(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, serviceAccountSecretName, serviceAccountName string) error {
+	serviceAccountExists, err := r.serviceAccountExists(ctx, hnp.GetNamespace(), serviceAccountName)
 	if err != nil {
-		r.Log.Error(err, fmt.Sprintf("could not check existence of service account \"%s\"", serviceAccountName))
+		r.Log.Error(err, fmt.Sprintf("could not check existence of service account %q", serviceAccountName))
 		return err
 	}
 	if !serviceAccountExists {
-		r.Log.Error(err, fmt.Sprintf("service account \"%s\" must exist before the service account secret can be created", serviceAccountName))
+		r.Log.Error(err, fmt.Sprintf("service account %q must exist before the service account secret can be created", serviceAccountName))
 		return err
 	}
 
-	foundServiceAccountSecretsList, err := kubernetes.ListSecrets(ctx, r, hc.Namespace, kubernetes.MatchingLabelsForSecret(hc.Name, serviceAccountSecretName))
+	foundServiceAccountSecretsList, err := kubernetes.ListSecrets(ctx, r, hnp.GetNamespace(), hnp.GetLabelsForSecret(serviceAccountSecretName))
 	if err != nil {
 		r.Log.Error(err, "unable list secrets")
 		return err
 	}
 
 	if len(foundServiceAccountSecretsList) == 0 {
-		secret := kubernetes.ConstructServiceAccountSecret(hc.Name, hc.Namespace, serviceAccountSecretName, serviceAccountName)
+		secret := kubernetes.ConstructServiceAccountSecret(hnp.GetClusterName(), hnp.GetNamespace(), serviceAccountSecretName, serviceAccountName)
 		if err := controllerutil.SetControllerReference(hc, secret, r.Scheme()); err != nil {
 			r.Log.Error(err, "could not set controller reference")
 			return err
@@ -1355,7 +1359,7 @@ func (r *HumioClusterReconciler) ensureServiceAccountSecretExists(ctx context.Co
 		}
 		// check that we can list the new secret
 		// this is to avoid issues where the requeue is faster than kubernetes
-		if err := r.waitForNewSecret(ctx, hc, foundServiceAccountSecretsList, serviceAccountSecretName); err != nil {
+		if err := r.waitForNewSecret(ctx, hnp, foundServiceAccountSecretsList, serviceAccountSecretName); err != nil {
 			r.Log.Error(err, "failed to validate new secret")
 			return err
 		}
@@ -1366,8 +1370,8 @@ func (r *HumioClusterReconciler) ensureServiceAccountSecretExists(ctx context.Co
 	return nil
 }
 
-func (r *HumioClusterReconciler) serviceAccountExists(ctx context.Context, hc *humiov1alpha1.HumioCluster, serviceAccountName string) (bool, error) {
-	if _, err := kubernetes.GetServiceAccount(ctx, r, serviceAccountName, hc.Namespace); err != nil {
+func (r *HumioClusterReconciler) serviceAccountExists(ctx context.Context, namespace, serviceAccountName string) (bool, error) {
+	if _, err := kubernetes.GetServiceAccount(ctx, r, serviceAccountName, namespace); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
@@ -1877,7 +1881,7 @@ func (r *HumioClusterReconciler) ensureHumioServiceAccountAnnotations(ctx contex
 		return reconcile.Result{}, err
 	}
 
-	serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetHumioServiceAccountName(), hnp.GetNamespace(), serviceAccountAnnotations)
+	serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetLabels())
 	serviceAccountAnnotationsString := helpers.MapToSortedString(serviceAccountAnnotations)
 	existingServiceAccountAnnotationsString := helpers.MapToSortedString(existingServiceAccount.Annotations)
 	if serviceAccountAnnotationsString != existingServiceAccountAnnotationsString {
@@ -1949,9 +1953,9 @@ func (r *HumioClusterReconciler) ensureMismatchedPodsAreDeleted(ctx context.Cont
 	desiredLifecycleState := podLifecycleState{}
 	if podsStatus.havePodsWithContainerStateWaitingErrors() {
 		r.Log.Info(fmt.Sprintf("found %d humio pods with errors", len(podsStatus.podErrors)))
-		desiredLifecycleState, err = r.getPodDesiredLifecycleState(hc, hnp, podsStatus.podErrors, attachments)
+		desiredLifecycleState, err = r.getPodDesiredLifecycleState(hnp, podsStatus.podErrors, attachments)
 	} else {
-		desiredLifecycleState, err = r.getPodDesiredLifecycleState(hc, hnp, foundPodList, attachments)
+		desiredLifecycleState, err = r.getPodDesiredLifecycleState(hnp, foundPodList, attachments)
 	}
 	if err != nil {
 		r.Log.Error(err, "got error when getting pod desired lifecycle")

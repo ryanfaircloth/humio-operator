@@ -10002,7 +10002,14 @@ spec:
                           - key
                           type: object
                       type: object
+                    initServiceAccountName:
+                      description: InitServiceAccountName is the name of the Kubernetes
+                        Service Account that will be attached to the init container
+                        in the humio pod.
+                      type: string
                     name:
+                      description: 'TODO: Mark name as required and non-empty, perhaps
+                        even confirm the content somehow'
                       type: string
                     nodeCount:
                       description: NodeCount is the desired number of humio cluster
@@ -12877,6 +12884,17 @@ spec:
                     podName:
                       type: string
                     pvcName:
+                      type: string
+                  type: object
+                type: array
+              poolStatus:
+                description: HumioNodePoolStatusList holds the list of HumioNodePoolStatus
+                  types
+                items:
+                  properties:
+                    name:
+                      type: string
+                    status:
                       type: string
                   type: object
                 type: array

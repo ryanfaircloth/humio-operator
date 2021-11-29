@@ -65,14 +65,6 @@ const (
 	idpCertificateSecretNameSuffix          = "idp-certificate"
 )
 
-/*
-type HumioNodeManager interface {
-	GetImage() string
-	//GetPodList() corev1.PodList
-	//Labels() map[string]string
-}
-*/
-
 type HumioNodePool struct {
 	clusterName              string
 	nodePoolName             string
@@ -490,6 +482,44 @@ func (hnp HumioNodePool) GetInitServiceAccountSecretName() string {
 	return fmt.Sprintf("%s-%s-%s", hnp.GetClusterName(), hnp.GetNodePoolName(), initServiceAccountSecretNameIdentifier)
 }
 
+func (hnp HumioNodePool) GetInitServiceAccountName() string {
+	if hnp.humioNodeSpec.InitServiceAccountName != "" {
+		return hnp.humioNodeSpec.InitServiceAccountName
+	}
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), initServiceAccountNameSuffix)
+}
+
+func (hnp HumioNodePool) InitServiceAccountIsSetByUser() bool {
+	return hnp.humioNodeSpec.InitServiceAccountName != ""
+}
+
+func (hnp HumioNodePool) GetAuthServiceAccountName() string {
+	if hnp.humioNodeSpec.AuthServiceAccountName != "" {
+		return hnp.humioNodeSpec.AuthServiceAccountName
+	}
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), authServiceAccountNameSuffix)
+}
+
+func (hnp HumioNodePool) AuthServiceAccountIsSetByUser() bool {
+	return hnp.humioNodeSpec.AuthServiceAccountName != ""
+}
+
+func (hnp HumioNodePool) GetInitClusterRoleName() string {
+	return fmt.Sprintf("%s-%s-%s", hnp.GetNamespace(), hnp.GetNodePoolName(), initClusterRoleSuffix)
+}
+
+func (hnp HumioNodePool) GetInitClusterRoleBindingName() string {
+	return fmt.Sprintf("%s-%s-%s", hnp.GetNamespace(), hnp.GetNodePoolName(), initClusterRoleBindingSuffix)
+}
+
+func (hnp HumioNodePool) GetAuthRoleName() string {
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), authRoleSuffix)
+}
+
+func (hnp HumioNodePool) GetAuthRoleBindingName() string {
+	return fmt.Sprintf("%s-%s", hnp.GetNodePoolName(), authRoleBindingSuffix)
+}
+
 func (hnp HumioNodePool) GetShareProcessNamespace() *bool {
 	if hnp.humioNodeSpec.ShareProcessNamespace == nil {
 		return helpers.BoolPtr(false)
@@ -769,32 +799,6 @@ func setDefaults(hc *humiov1alpha1.HumioCluster) {
 
 }
 
-func humioServiceAccountAnnotationsOrDefault(hc *humiov1alpha1.HumioCluster) map[string]string {
-	return hc.Spec.HumioServiceAccountAnnotations
-}
-
-func initServiceAccountNameOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	if hc.Spec.InitServiceAccountName != "" {
-		return hc.Spec.InitServiceAccountName
-	}
-	return fmt.Sprintf("%s-%s", hc.Name, initServiceAccountNameSuffix)
-}
-
-func initServiceAccountSecretName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s", hc.Name, initServiceAccountSecretNameIdentifier)
-}
-
-func authServiceAccountNameOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	if hc.Spec.AuthServiceAccountName != "" {
-		return hc.Spec.AuthServiceAccountName
-	}
-	return fmt.Sprintf("%s-%s", hc.Name, authServiceAccountNameSuffix)
-}
-
-func authServiceAccountSecretName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s", hc.Name, authServiceAccountSecretNameIdentifier)
-}
-
 func extraKafkaConfigsOrDefault(hc *humiov1alpha1.HumioCluster) string {
 	return hc.Spec.ExtraKafkaConfigs
 }
@@ -809,22 +813,6 @@ func viewGroupPermissionsOrDefault(hc *humiov1alpha1.HumioCluster) string {
 
 func viewGroupPermissionsConfigMapName(hc *humiov1alpha1.HumioCluster) string {
 	return fmt.Sprintf("%s-%s", hc.Name, viewGroupPermissionsConfigMapNameSuffix)
-}
-
-func initClusterRoleName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s-%s", hc.Namespace, hc.Name, initClusterRoleSuffix)
-}
-
-func initClusterRoleBindingName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s-%s", hc.Namespace, hc.Name, initClusterRoleBindingSuffix)
-}
-
-func authRoleName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s", hc.Name, authRoleSuffix)
-}
-
-func authRoleBindingName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s", hc.Name, authRoleBindingSuffix)
 }
 
 func setEnvironmentVariableDefaults(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) {

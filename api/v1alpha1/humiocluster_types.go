@@ -47,8 +47,6 @@ type HumioClusterSpec struct {
 	License HumioClusterLicenseSpec `json:"license,omitempty"`
 	// IdpCertificateSecretName is the name of the secret that contains the IDP Certificate when using SAML authentication
 	IdpCertificateSecretName string `json:"idpCertificateSecretName,omitempty"`
-	// InitServiceAccountName is the name of the Kubernetes Service Account that will be attached to the init container in the humio pod.
-	InitServiceAccountName string `json:"initServiceAccountName,omitempty"`
 	// ViewGroupPermissions is a multi-line string containing view-group-permissions.json
 	ViewGroupPermissions string `json:"viewGroupPermissions,omitempty"`
 	// Hostname is the public hostname used by clients to access Humio
@@ -204,9 +202,13 @@ type HumioNodeSpec struct {
 	// HumioServiceAnnotations is the set of annotations added to the Kubernetes Service that is used to direct traffic
 	// to the Humio pods
 	HumioServiceAnnotations map[string]string `json:"humioServiceAnnotations,omitempty"`
+
+	// InitServiceAccountName is the name of the Kubernetes Service Account that will be attached to the init container in the humio pod.
+	InitServiceAccountName string `json:"initServiceAccountName,omitempty"`
 }
 
 type HumioNodePoolSpec struct {
+	// TODO: Mark name as required and non-empty, perhaps even confirm the content somehow
 	Name string `json:"name,omitempty"`
 
 	HumioNodeSpec `json:",inline"`
@@ -266,6 +268,14 @@ type HumioPodStatus struct {
 	NodeId  int    `json:"nodeId,omitempty"`
 }
 
+type HumioNodePoolStatus struct {
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// HumioNodePoolStatusList holds the list of HumioNodePoolStatus types
+type HumioNodePoolStatusList []HumioNodePoolStatus
+
 // HumioPodStatusList holds the list of HumioPodStatus types
 type HumioPodStatusList []HumioPodStatus
 
@@ -289,6 +299,8 @@ type HumioClusterStatus struct {
 	LicenseStatus HumioLicenseStatus `json:"licenseStatus,omitempty"`
 	// ObservedGeneration shows the generation of the HumioCluster which was last observed
 	ObservedGeneration string `json:"observedGeneration,omitempty"` // TODO: We should change the type to int64 so we don't have to convert back and forth between int64 and string
+
+	PoolStatus HumioNodePoolStatusList `json:"poolStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

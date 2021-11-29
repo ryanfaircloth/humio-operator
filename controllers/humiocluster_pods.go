@@ -881,7 +881,7 @@ func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hnp *HumioNo
 	return fmt.Errorf("timed out waiting to validate new pod was created")
 }
 
-func (r *HumioClusterReconciler) podsMatch(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, pod corev1.Pod, desiredPod corev1.Pod) (bool, error) {
+func (r *HumioClusterReconciler) podsMatch(hnp *HumioNodePool, pod corev1.Pod, desiredPod corev1.Pod) (bool, error) {
 	if _, ok := pod.Annotations[podHashAnnotation]; !ok {
 		return false, fmt.Errorf("did not find annotation with pod hash")
 	}
@@ -952,7 +952,7 @@ func (r *HumioClusterReconciler) getRestartPolicyFromPodInspection(pod, desiredP
 	return PodRestartPolicyRolling, nil
 }
 
-func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool, foundPodList []corev1.Pod, attachments *podAttachments) (podLifecycleState, error) {
+func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hnp *HumioNodePool, foundPodList []corev1.Pod, attachments *podAttachments) (podLifecycleState, error) {
 	for _, pod := range foundPodList {
 		// only consider pods not already being deleted
 		if pod.DeletionTimestamp == nil {
@@ -963,7 +963,7 @@ func (r *HumioClusterReconciler) getPodDesiredLifecycleState(hc *humiov1alpha1.H
 				return podLifecycleState{}, err
 			}
 
-			podsMatchTest, err := r.podsMatch(hc, hnp, pod, *desiredPod)
+			podsMatchTest, err := r.podsMatch(hnp, pod, *desiredPod)
 			if err != nil {
 				r.Log.Error(err, "failed to check if pods match")
 			}

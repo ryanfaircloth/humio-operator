@@ -1089,7 +1089,7 @@ var _ = Describe("HumioCluster Controller", func() {
 		})
 	})
 
-	Context("Humio Cluster Service Account Annotations", func() {
+	FContext("Humio Cluster Service Account Annotations", func() {
 		It("Should correctly handle service account annotations", func() {
 			key := types.NamespacedName{
 				Name:      "humiocluster-sa-annotations",
@@ -1101,13 +1101,13 @@ var _ = Describe("HumioCluster Controller", func() {
 			ctx := context.Background()
 			createAndBootstrapCluster(ctx, toCreate, true)
 			defer cleanupCluster(ctx, toCreate)
-			humioServiceAccoutName := fmt.Sprintf("%s-%s", key.Name, humioServiceAccountNameSuffix)
+			humioServiceAccountName := fmt.Sprintf("%s-%s", key.Name, humioServiceAccountNameSuffix)
 
 			Eventually(func() error {
-				_, err := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
+				_, err := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountName, key.Namespace)
 				return err
 			}, testTimeout, testInterval).Should(Succeed())
-			serviceAccount, _ := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
+			serviceAccount, _ := kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountName, key.Namespace)
 			Expect(serviceAccount.Annotations).Should(BeNil())
 
 			usingClusterBy(key.Name, "Adding an annotation successfully")
@@ -1121,7 +1121,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				return k8sClient.Update(ctx, &updatedHumioCluster)
 			}, testTimeout, testInterval).Should(Succeed())
 			Eventually(func() bool {
-				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
+				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountName, key.Namespace)
 				_, ok := serviceAccount.Annotations["some-annotation"]
 				return ok
 			}, testTimeout, testInterval).Should(BeTrue())
@@ -1138,7 +1138,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				return k8sClient.Update(ctx, &updatedHumioCluster)
 			}, testTimeout, testInterval).Should(Succeed())
 			Eventually(func() map[string]string {
-				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccoutName, key.Namespace)
+				serviceAccount, _ = kubernetes.GetServiceAccount(ctx, k8sClient, humioServiceAccountName, key.Namespace)
 				return serviceAccount.Annotations
 			}, testTimeout, testInterval).Should(BeNil())
 		})
@@ -2652,7 +2652,7 @@ var _ = Describe("HumioCluster Controller", func() {
 		})
 	})
 
-	Context("Humio Cluster With Custom Service Accounts", func() {
+	FContext("Humio Cluster With Custom Service Accounts", func() {
 		It("Creating cluster with custom service accounts", func() {
 			key := types.NamespacedName{
 				Name:      "humiocluster-custom-service-accounts",
@@ -3405,7 +3405,7 @@ func createAndBootstrapCluster(ctx context.Context, cluster *humiov1alpha1.Humio
 
 	if cluster.Spec.HumioServiceAccountName != "" {
 		usingClusterBy(key.Name, "Creating service account for humio container")
-		humioServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.HumioServiceAccountName, cluster.Name, cluster.Namespace, map[string]string{})
+		humioServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.HumioServiceAccountName, cluster.Namespace, map[string]string{}, map[string]string{})
 		Expect(k8sClient.Create(ctx, humioServiceAccount)).To(Succeed())
 	}
 
@@ -3413,7 +3413,7 @@ func createAndBootstrapCluster(ctx context.Context, cluster *humiov1alpha1.Humio
 		if cluster.Spec.InitServiceAccountName != "" {
 			if cluster.Spec.InitServiceAccountName != cluster.Spec.HumioServiceAccountName {
 				usingClusterBy(key.Name, "Creating service account for init container")
-				initServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.InitServiceAccountName, cluster.Name, cluster.Namespace, map[string]string{})
+				initServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.InitServiceAccountName, cluster.Namespace, map[string]string{}, map[string]string{})
 				Expect(k8sClient.Create(ctx, initServiceAccount)).To(Succeed())
 			}
 
@@ -3422,7 +3422,7 @@ func createAndBootstrapCluster(ctx context.Context, cluster *humiov1alpha1.Humio
 			Expect(k8sClient.Create(ctx, initClusterRole)).To(Succeed())
 
 			usingClusterBy(key.Name, "Creating cluster role binding for init container")
-			initClusterRoleBinding := kubernetes.ConstructClusterRoleBinding(cluster.Spec.InitServiceAccountName, initClusterRole.Name, key.Name, key.Namespace, cluster.Spec.InitServiceAccountName)
+			initClusterRoleBinding := kubernetes.ConstructClusterRoleBinding(cluster.Spec.InitServiceAccountName, initClusterRole.Name, key.Namespace, cluster.Spec.InitServiceAccountName, map[string]string{})
 			Expect(k8sClient.Create(ctx, initClusterRoleBinding)).To(Succeed())
 		}
 	}
@@ -3430,16 +3430,16 @@ func createAndBootstrapCluster(ctx context.Context, cluster *humiov1alpha1.Humio
 	if cluster.Spec.AuthServiceAccountName != "" {
 		if cluster.Spec.AuthServiceAccountName != cluster.Spec.HumioServiceAccountName {
 			usingClusterBy(key.Name, "Creating service account for auth container")
-			authServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.AuthServiceAccountName, cluster.Name, cluster.Namespace, map[string]string{})
+			authServiceAccount := kubernetes.ConstructServiceAccount(cluster.Spec.AuthServiceAccountName, cluster.Namespace, map[string]string{}, map[string]string{})
 			Expect(k8sClient.Create(ctx, authServiceAccount)).To(Succeed())
 		}
 
 		usingClusterBy(key.Name, "Creating role for auth container")
-		authRole := kubernetes.ConstructAuthRole(cluster.Spec.AuthServiceAccountName, key.Name, key.Namespace)
+		authRole := kubernetes.ConstructAuthRole(cluster.Spec.AuthServiceAccountName, key.Namespace, map[string]string{})
 		Expect(k8sClient.Create(ctx, authRole)).To(Succeed())
 
 		usingClusterBy(key.Name, "Creating role binding for auth container")
-		authRoleBinding := kubernetes.ConstructRoleBinding(cluster.Spec.AuthServiceAccountName, authRole.Name, key.Name, key.Namespace, cluster.Spec.AuthServiceAccountName)
+		authRoleBinding := kubernetes.ConstructRoleBinding(cluster.Spec.AuthServiceAccountName, authRole.Name, key.Namespace, cluster.Spec.AuthServiceAccountName, map[string]string{})
 		Expect(k8sClient.Create(ctx, authRoleBinding)).To(Succeed())
 	}
 
