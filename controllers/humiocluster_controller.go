@@ -768,7 +768,7 @@ func (r *HumioClusterReconciler) ensureNginxIngress(ctx context.Context, hc *hum
 func (r *HumioClusterReconciler) ensureHumioPodPermissions(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
 	// Do not manage these resources if the HumioServiceAccountName is supplied. This implies the service account is managed
 	// outside of the operator
-	if !hnp.HumioServiceAccountIsSetByUser() {
+	if hnp.HumioServiceAccountIsSetByUser() {
 		return nil
 	}
 
