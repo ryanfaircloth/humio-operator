@@ -1607,7 +1607,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: extraKafkaConfigsConfigMapName(toCreate),
+							Name: NewHumioNodeManagerFromHumioCluster(toCreate).GetExtraKafkaConfigsConfigMapName(),
 						},
 						DefaultMode: &mode,
 					},
@@ -1615,7 +1615,7 @@ var _ = Describe("HumioCluster Controller", func() {
 			}))
 
 			usingClusterBy(key.Name, "Confirming config map contains desired extra kafka configs")
-			configMap, _ := kubernetes.GetConfigMap(ctx, k8sClient, extraKafkaConfigsConfigMapName(toCreate), key.Namespace)
+			configMap, _ := kubernetes.GetConfigMap(ctx, k8sClient, NewHumioNodeManagerFromHumioCluster(toCreate).GetExtraKafkaConfigsConfigMapName(), key.Namespace)
 			Expect(configMap.Data[extraKafkaPropertiesFilename]).To(Equal(toCreate.Spec.ExtraKafkaConfigs))
 
 			usingClusterBy(key.Name, "Removing extra kafka configs")
@@ -1668,7 +1668,7 @@ var _ = Describe("HumioCluster Controller", func() {
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: extraKafkaConfigsConfigMapName(toCreate),
+							Name: NewHumioNodeManagerFromHumioCluster(toCreate).GetExtraKafkaConfigsConfigMapName(),
 						},
 						DefaultMode: &mode,
 					},

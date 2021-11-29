@@ -312,9 +312,11 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	err = r.ensureExtraKafkaConfigsConfigMap(ctx, hc) // TODO: This should be per node pool
-	if err != nil {
-		return reconcile.Result{}, err
+	for _, pool := range humioNodePools {
+		err = r.ensureExtraKafkaConfigsConfigMap(ctx, hc, pool)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	err = r.ensureViewGroupPermissionsConfigMap(ctx, hc)
@@ -454,20 +456,20 @@ func (r *HumioClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // ensureExtraKafkaConfigsConfigMap creates a configmap containing configs specified in extraKafkaConfigs which will be mounted
 // into the Humio container and pointed to by Humio's configuration option EXTRA_KAFKA_CONFIGS_FILE
-func (r *HumioClusterReconciler) ensureExtraKafkaConfigsConfigMap(ctx context.Context, hc *humiov1alpha1.HumioCluster) error {
-	extraKafkaConfigsConfigMapData := extraKafkaConfigsOrDefault(hc)
+func (r *HumioClusterReconciler) ensureExtraKafkaConfigsConfigMap(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) error {
+	extraKafkaConfigsConfigMapData := hnp.GetExtraKafkaConfigs()
 	if extraKafkaConfigsConfigMapData == "" {
 		return nil
 	}
-	_, err := kubernetes.GetConfigMap(ctx, r, extraKafkaConfigsConfigMapName(hc), hc.Namespace)
+	_, err := kubernetes.GetConfigMap(ctx, r, hnp.GetExtraKafkaConfigsConfigMapName(), hnp.GetNamespace())
 	if err != nil {
 		if errors.IsNotFound(err) {
 			configMap := kubernetes.ConstructExtraKafkaConfigsConfigMap(
-				extraKafkaConfigsConfigMapName(hc),
+				hnp.GetExtraKafkaConfigsConfigMapName(),
 				extraKafkaPropertiesFilename,
 				extraKafkaConfigsConfigMapData,
-				hc.Name,
-				hc.Namespace,
+				hnp.GetClusterName(),
+				hnp.GetNamespace(),
 			)
 			if err := controllerutil.SetControllerReference(hc, configMap, r.Scheme()); err != nil {
 				r.Log.Error(err, "could not set controller reference")

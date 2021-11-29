@@ -795,14 +795,6 @@ func setDefaults(hc *humiov1alpha1.HumioCluster) {
 
 }
 
-func extraKafkaConfigsOrDefault(hc *humiov1alpha1.HumioCluster) string {
-	return hc.Spec.ExtraKafkaConfigs
-}
-
-func extraKafkaConfigsConfigMapName(hc *humiov1alpha1.HumioCluster) string {
-	return fmt.Sprintf("%s-%s", hc.Name, extraKafkaConfigsConfigMapNameSuffix)
-}
-
 func viewGroupPermissionsOrDefault(hc *humiov1alpha1.HumioCluster) string {
 	return hc.Spec.ViewGroupPermissions
 }
