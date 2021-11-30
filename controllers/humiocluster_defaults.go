@@ -130,6 +130,7 @@ func NewHumioNodeManagerFromHumioCluster(hc *humiov1alpha1.HumioCluster) *HumioN
 			HumioServiceType:               hc.Spec.HumioServiceType,
 			HumioServiceAnnotations:        hc.Spec.HumioServiceAnnotations,
 			InitServiceAccountName:         hc.Spec.InitServiceAccountName,
+			PodLabels:                      hc.Spec.PodLabels,
 		},
 		tls:                      hc.Spec.TLS,
 		idpCertificateSecretName: hc.Spec.IdpCertificateSecretName,
@@ -189,6 +190,7 @@ func NewHumioNodeManagerFromHumioNodePool(hc *humiov1alpha1.HumioCluster, hnp *h
 			HumioServiceType:               hnp.HumioServiceType,
 			HumioServiceAnnotations:        hnp.HumioServiceAnnotations,
 			InitServiceAccountName:         hnp.InitServiceAccountName,
+			PodLabels:                      hnp.PodLabels,
 		},
 		tls:                      hc.Spec.TLS,
 		idpCertificateSecretName: hc.Spec.IdpCertificateSecretName,
@@ -418,9 +420,19 @@ func (hnp HumioNodePool) GetContainerSecurityContext() *corev1.SecurityContext {
 	return hnp.humioNodeSpec.ContainerSecurityContext
 }
 
-func (hnp HumioNodePool) GetLabels() map[string]string {
+func (hnp HumioNodePool) GetNodePoolLabels() map[string]string {
 	labels := hnp.GetCommonClusterLabels()
 	labels[kubernetes.NodePoolLabelName] = hnp.GetNodePoolName()
+	return labels
+}
+
+func (hnp HumioNodePool) GetPodLabels() map[string]string {
+	labels := hnp.GetNodePoolLabels()
+	for k, v := range hnp.humioNodeSpec.PodLabels {
+		if _, ok := labels[k]; !ok {
+			labels[k] = v
+		}
+	}
 	return labels
 }
 

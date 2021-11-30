@@ -47,7 +47,7 @@ func constructService(hnp *HumioNodePool) *corev1.Service {
 		},
 		Spec: corev1.ServiceSpec{
 			Type:     hnp.GetServiceType(),
-			Selector: hnp.GetLabels(),
+			Selector: hnp.GetNodePoolLabels(),
 			Ports: []corev1.ServicePort{
 				{
 					Name: "http",

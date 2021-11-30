@@ -848,6 +848,33 @@ var _ = Describe("HumioCluster Controller", func() {
 		})
 	})
 
+	Context("Humio Cluster Pod Labels", func() {
+		It("Should be correctly annotated", func() {
+			key := types.NamespacedName{
+				Name:      "humiocluster-labels",
+				Namespace: testProcessID,
+			}
+			toCreate := constructBasicSingleNodeHumioCluster(key, true)
+			toCreate.Spec.PodLabels = map[string]string{"humio.com/new-important-label": "true"}
+
+			usingClusterBy(key.Name, "Creating the cluster successfully")
+			ctx := context.Background()
+			createAndBootstrapCluster(ctx, toCreate, true)
+			defer cleanupCluster(ctx, toCreate)
+
+			Eventually(func() bool {
+				clusterPods, _ := kubernetes.ListPods(ctx, k8sClient, toCreate.Namespace, kubernetes.MatchingLabelsForHumio(toCreate.Name))
+				Expect(len(clusterPods)).To(BeIdenticalTo(*toCreate.Spec.NodeCount))
+
+				for _, pod := range clusterPods {
+					Expect(pod.Labels["humio.com/new-important-label"]).Should(Equal("true"))
+					Expect(pod.Labels["app.kubernetes.io/managed-by"]).Should(Equal("humio-operator"))
+				}
+				return true
+			}, testTimeout, testInterval).Should(BeTrue())
+		})
+	})
+
 	Context("Humio Cluster Custom Service", func() {
 		It("Should correctly use default service", func() {
 			key := types.NamespacedName{
@@ -3723,7 +3750,7 @@ func podReadyCountByRevision(ctx context.Context, hnp *HumioNodePool, expectedPo
 	usingClusterBy(hnp.GetClusterName(), fmt.Sprintf("podReadyCountByRevision(expectedPodRevision=%d, expectedReadyCount=%d)", expectedPodRevision, expectedReadyCount))
 	revisionToReadyCount := map[int]int{}
 	//expectedPodRevisionStr := strconv.Itoa(expectedPodRevision)
-	clusterPods, _ := kubernetes.ListPods(ctx, k8sClient, hnp.GetNamespace(), hnp.GetLabels())
+	clusterPods, _ := kubernetes.ListPods(ctx, k8sClient, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	for nodeID, pod := range clusterPods {
 		usingClusterBy(hnp.GetClusterName(), fmt.Sprintf("podReadyCountByRevision.clusterPods[%s].Annotations = %#+v", clusterPods[nodeID].Name, clusterPods[nodeID].Annotations))
 		for i, condition := range pod.Status.Conditions {

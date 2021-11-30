@@ -381,7 +381,6 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return result, err
 	}
 
-	// TODO: Should we len(humioNodePools) == 1 here? Do we want to ensure we only use the entry in humioNodePools that was created by the HumioCluster resource, and *not* the HumioClusterSpec.NodePools?
 	err = r.ensureIngress(ctx, hc)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -389,7 +388,7 @@ func (r *HumioClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	for _, pool := range humioNodePools {
 		// wait until all pods are ready before continuing
-		foundPodList, err := kubernetes.ListPods(ctx, r, pool.GetNamespace(), pool.GetLabels())
+		foundPodList, err := kubernetes.ListPods(ctx, r, pool.GetNamespace(), pool.GetNodePoolLabels())
 		if err != nil {
 			r.Log.Error(err, "failed to list pods")
 			return ctrl.Result{}, err
@@ -613,6 +612,9 @@ func (r *HumioClusterReconciler) ensureIngress(ctx context.Context, hc *humiov1a
 	if !hc.Spec.Ingress.Enabled {
 		return nil
 	}
+	if len(hc.Spec.NodePools) > 0 {
+		return fmt.Errorf("ingress only supported if pods belong to HumioCluster.Spec.NodeCount")
+	}
 	if len(hc.Spec.Ingress.Controller) == 0 {
 		return fmt.Errorf("ingress enabled but no controller specified")
 	}
@@ -625,7 +627,7 @@ func (r *HumioClusterReconciler) ensureIngress(ctx context.Context, hc *humiov1a
 			return err
 		}
 	default:
-		return fmt.Errorf("ingress controller '%s' not supported", hc.Spec.Ingress.Controller)
+		return fmt.Errorf("ingress controller %q not supported", hc.Spec.Ingress.Controller)
 	}
 
 	return nil
@@ -1195,7 +1197,7 @@ func (r *HumioClusterReconciler) ensureAuthRole(ctx context.Context, hc *humiov1
 	_, err := kubernetes.GetRole(ctx, r, roleName, hnp.GetNamespace())
 	if err != nil {
 		if errors.IsNotFound(err) {
-			role := kubernetes.ConstructAuthRole(roleName, hnp.GetNamespace(), hnp.GetLabels())
+			role := kubernetes.ConstructAuthRole(roleName, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 			if err := controllerutil.SetControllerReference(hc, role, r.Scheme()); err != nil {
 				r.Log.Error(err, "could not set controller reference")
 				return err
@@ -1223,7 +1225,7 @@ func (r *HumioClusterReconciler) ensureInitClusterRoleBinding(ctx context.Contex
 				hnp.GetInitClusterRoleName(),
 				hnp.GetNamespace(),
 				hnp.GetInitServiceAccountName(),
-				hnp.GetLabels(),
+				hnp.GetNodePoolLabels(),
 			)
 			// TODO: We cannot use controllerutil.SetControllerReference() as ClusterRoleBinding is cluster-wide and owner is namespaced.
 			// We probably need another way to ensure we clean them up. Perhaps we can use finalizers?
@@ -1250,7 +1252,7 @@ func (r *HumioClusterReconciler) ensureAuthRoleBinding(ctx context.Context, hc *
 				hnp.GetAuthRoleName(),
 				hnp.GetNamespace(),
 				hnp.GetAuthServiceAccountName(),
-				hnp.GetLabels(),
+				hnp.GetNodePoolLabels(),
 			)
 			if err := controllerutil.SetControllerReference(hc, roleBinding, r.Scheme()); err != nil {
 				r.Log.Error(err, "could not set controller reference")
@@ -1310,7 +1312,7 @@ func (r *HumioClusterReconciler) ensureServiceAccountExists(ctx context.Context,
 		return err
 	}
 	if !serviceAccountExists {
-		serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetLabels())
+		serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetNodePoolLabels())
 		if err := controllerutil.SetControllerReference(hc, serviceAccount, r.Scheme()); err != nil {
 			r.Log.Error(err, "could not set controller reference")
 			return err
@@ -1387,7 +1389,7 @@ func (r *HumioClusterReconciler) ensureLabels(ctx context.Context, config *humio
 		return err
 	}
 
-	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		r.Log.Error(err, "failed to list pods")
 		return err
@@ -1880,7 +1882,7 @@ func (r *HumioClusterReconciler) ensureHumioServiceAccountAnnotations(ctx contex
 		return reconcile.Result{}, err
 	}
 
-	serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetLabels())
+	serviceAccount := kubernetes.ConstructServiceAccount(serviceAccountName, hnp.GetNamespace(), serviceAccountAnnotations, hnp.GetNodePoolLabels())
 	serviceAccountAnnotationsString := helpers.MapToSortedString(serviceAccountAnnotations)
 	existingServiceAccountAnnotationsString := helpers.MapToSortedString(existingServiceAccount.Annotations)
 	if serviceAccountAnnotationsString != existingServiceAccountAnnotationsString {
@@ -1911,7 +1913,7 @@ func (r *HumioClusterReconciler) ensureHumioServiceAccountAnnotations(ctx contex
 // and the reconciliation will requeue and the deletions will continue to be executed until all the pods have been
 // removed.
 func (r *HumioClusterReconciler) ensureMismatchedPodsAreDeleted(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) (reconcile.Result, error) {
-	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -2068,7 +2070,7 @@ func (r *HumioClusterReconciler) ingressesMatch(ingress *networkingv1.Ingress, d
 func (r *HumioClusterReconciler) ensurePodsExist(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) (reconcile.Result, error) {
 	// Ensure we have pods for the defined NodeCount.
 	// If scaling down, we will handle the extra/obsolete pods later.
-	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+	foundPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		r.Log.Error(err, "failed to list pods")
 		return reconcile.Result{}, err
@@ -2109,7 +2111,7 @@ func (r *HumioClusterReconciler) ensurePersistentVolumeClaimsExist(ctx context.C
 	}
 
 	r.Log.Info("ensuring pvcs")
-	foundPersistentVolumeClaims, err := kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+	foundPersistentVolumeClaims, err := kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		r.Log.Error(err, "failed to list pvcs")
 		return reconcile.Result{}, err
@@ -2181,7 +2183,7 @@ func (r *HumioClusterReconciler) ensureValidStorageConfiguration(hc *humiov1alph
 
 func (r *HumioClusterReconciler) pvcList(ctx context.Context, hnp *HumioNodePool) ([]corev1.PersistentVolumeClaim, error) {
 	if hnp.PVCsEnabled() {
-		return kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+		return kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	}
 	return []corev1.PersistentVolumeClaim{}, nil
 }

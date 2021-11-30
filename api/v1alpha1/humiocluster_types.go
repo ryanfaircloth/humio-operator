@@ -71,9 +71,10 @@ type HumioClusterSpec struct {
 	// traffic between Humio pods
 	HumioHeadlessServiceLabels map[string]string `json:"humioHeadlessServiceLabels,omitempty"`
 
-	NodePools []HumioNodePoolSpec `json:"nodePools,omitempty"`
-
 	HumioNodeSpec `json:",inline"`
+
+	// NodePools can be used to define additional groups of Humio cluster pods that share a set of configuration.
+	NodePools []HumioNodePoolSpec `json:"nodePools,omitempty"`
 }
 
 type HumioNodeSpec struct {
@@ -132,8 +133,8 @@ type HumioNodeSpec struct {
 	// If specified and non-empty, the user-specified liveness probe will be used.
 	// If specified and empty, the pod will be created without a liveness probe set.
 	// Otherwise, use the built in default liveness probe configuration.
-
 	ContainerLivenessProbe *corev1.Probe `json:"containerLivenessProbe,omitempty"`
+
 	// ContainerStartupProbe is the startup probe applied to the Humio container
 	// If specified and non-empty, the user-specified startup probe will be used.
 	// If specified and empty, the pod will be created without a startup probe set.
@@ -205,13 +206,16 @@ type HumioNodeSpec struct {
 
 	// InitServiceAccountName is the name of the Kubernetes Service Account that will be attached to the init container in the humio pod.
 	InitServiceAccountName string `json:"initServiceAccountName,omitempty"`
+
+	// PodLabels can be used to specify labels that will be added to the Humio pods
+	PodLabels map[string]string `json:"podLabels,omitempty"`
 }
 
 type HumioNodePoolSpec struct {
 	// TODO: Mark name as required and non-empty, perhaps even confirm the content somehow
 	Name string `json:"name,omitempty"`
 
-	HumioNodeSpec `json:",inline"`
+	HumioNodeSpec `json:"spec,omitempty"`
 }
 
 // HumioHostnameSource is the possible references to a hostname value that is stored outside of the HumioCluster resource
@@ -261,23 +265,15 @@ type HumioImageSource struct {
 	ConfigMapRef *corev1.ConfigMapKeySelector `json:"configMapRef,omitempty"`
 }
 
+// HumioPodStatusList holds the list of HumioPodStatus types
+type HumioPodStatusList []HumioPodStatus
+
 // HumioPodStatus shows the status of individual humio pods
 type HumioPodStatus struct {
 	PodName string `json:"podName,omitempty"`
 	PvcName string `json:"pvcName,omitempty"`
 	NodeId  int    `json:"nodeId,omitempty"`
 }
-
-type HumioNodePoolStatus struct {
-	Name   string `json:"name,omitempty"`
-	Status string `json:"status,omitempty"`
-}
-
-// HumioNodePoolStatusList holds the list of HumioNodePoolStatus types
-type HumioNodePoolStatusList []HumioNodePoolStatus
-
-// HumioPodStatusList holds the list of HumioPodStatus types
-type HumioPodStatusList []HumioPodStatus
 
 // HumioLicenseStatus shows the status of Humio license
 type HumioLicenseStatus struct {
@@ -299,8 +295,6 @@ type HumioClusterStatus struct {
 	LicenseStatus HumioLicenseStatus `json:"licenseStatus,omitempty"`
 	// ObservedGeneration shows the generation of the HumioCluster which was last observed
 	ObservedGeneration string `json:"observedGeneration,omitempty"` // TODO: We should change the type to int64 so we don't have to convert back and forth between int64 and string
-
-	PoolStatus HumioNodePoolStatusList `json:"poolStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

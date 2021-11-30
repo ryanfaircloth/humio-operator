@@ -186,7 +186,7 @@ func constructNodeCertificate(hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool
 			Annotations: map[string]string{},
 			Namespace:   hnp.GetNamespace(),
 			Name:        fmt.Sprintf("%s-core-%s", hnp.GetNodePoolName(), nodeSuffix),
-			Labels:      hnp.GetLabels(),
+			Labels:      hnp.GetNodePoolLabels(),
 		},
 		Spec: cmapi.CertificateSpec{
 			DNSNames: []string{
@@ -231,7 +231,7 @@ func (r *HumioClusterReconciler) waitForNewNodeCertificate(ctx context.Context, 
 // updateNodeCertificates updates existing node certificates that have been changed. Returns the count of existing node
 // certificates
 func (r *HumioClusterReconciler) updateNodeCertificates(ctx context.Context, hc *humiov1alpha1.HumioCluster, hnp *HumioNodePool) (int, error) {
-	certificates, err := kubernetes.ListCertificates(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+	certificates, err := kubernetes.ListCertificates(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		return -1, err
 	}

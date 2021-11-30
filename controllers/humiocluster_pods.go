@@ -152,7 +152,7 @@ func constructPod(hnp *HumioNodePool, humioNodeName string, attachments *podAtta
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        humioNodeName,
 			Namespace:   hnp.GetNamespace(),
-			Labels:      hnp.GetLabels(),
+			Labels:      hnp.GetPodLabels(),
 			Annotations: kubernetes.AnnotationsForHumio(hnp.GetPodAnnotations(), productVersion),
 		},
 		Spec: corev1.PodSpec{
@@ -863,7 +863,7 @@ func (r *HumioClusterReconciler) waitForNewPod(ctx context.Context, hnp *HumioNo
 
 	for i := 0; i < waitForPodTimeoutSeconds; i++ {
 		var podsMatchingRevisionCount int
-		latestPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+		latestPodList, err := kubernetes.ListPods(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 		if err != nil {
 			return err
 		}
@@ -992,7 +992,7 @@ func findHumioNodeName(ctx context.Context, c client.Client, hnp *HumioNodePool)
 	}
 
 	// if TLS is enabled, use the first available TLS certificate
-	certificates, err := kubernetes.ListCertificates(ctx, c, hnp.GetNamespace(), hnp.GetLabels())
+	certificates, err := kubernetes.ListCertificates(ctx, c, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 	if err != nil {
 		return "", err
 	}

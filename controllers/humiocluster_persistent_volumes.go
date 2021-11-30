@@ -36,7 +36,7 @@ func constructPersistentVolumeClaim(hnp *HumioNodePool) *corev1.PersistentVolume
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        fmt.Sprintf("%s-core-%s", hnp.GetNodePoolName(), kubernetes.RandomString()),
 			Namespace:   hnp.GetNamespace(),
-			Labels:      hnp.GetLabels(),
+			Labels:      hnp.GetNodePoolLabels(),
 			Annotations: map[string]string{},
 		},
 		Spec: hnp.GetDataVolumePersistentVolumeClaimSpecTemplateRAW(),
@@ -85,7 +85,7 @@ func findNextAvailablePvc(pvcList []corev1.PersistentVolumeClaim, podList []core
 func (r *HumioClusterReconciler) waitForNewPvc(ctx context.Context, hnp *HumioNodePool, expectedPvc *corev1.PersistentVolumeClaim) error {
 	for i := 0; i < waitForPvcTimeoutSeconds; i++ {
 		r.Log.Info(fmt.Sprintf("validating new pvc was created. waiting for pvc with name %s", expectedPvc.Name))
-		latestPvcList, err := kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetLabels())
+		latestPvcList, err := kubernetes.ListPersistentVolumeClaims(ctx, r, hnp.GetNamespace(), hnp.GetNodePoolLabels())
 		if err != nil {
 			return fmt.Errorf("failed to list pvcs: %s", err)
 		}
